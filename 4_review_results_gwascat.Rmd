@@ -1,0 +1,252 @@
+---
+title: "parse_gwas_catalog"
+author: "MV"
+date: "03/12/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(plyr)
+library(dplyr)
+library(readr)
+library(tidyr)
+library(purrr)
+library(data.table)
+library(tidyselect)
+library(stringr)
+```
+
+```{r}
+data_path<-"" # to use in Rstudio 
+
+```
+
+```{r}
+# Load catalog and subset to useful columns
+#catalog<- as.data.frame(fread(paste0(data_path, "gwas_catalog/gwas_catalog_v1.0.2-associations_e96_r2019-11-21.tsv")))
+#dim(catalog)
+#catalog_sub<- catalog %>% select("SNPS" ,  "STRONGEST SNP-RISK ALLELE" ,"MAPPED_GENE",   "DISEASE/TRAIT" , "MAPPED_TRAIT",
+#                                 "CHR_ID", "CHR_POS" , "CONTEXT", 
+#                                 "MAPPED_TRAIT_URI" ,
+#                                 "PUBMEDID" , "STUDY","STUDY ACCESSION"  ) %>% 
+#                          separate_rows(MAPPED_GENE, sep="\\, ") %>%  distinct()
+
+catalog_sub<- fread(paste0(data_path, "gwas_catalog/gwas_catalog_subset.tsv"))
+#write_tsv(catalog_sub, paste0(data_path, "gwas_catalog/gwas_catalog_subset.tsv"))
+
+```
+
+```{r}
+# Load metaCCA results for single SNPs analysis
+#metacca_snps<-fread(paste0(data_path,"results/test_result_w11_r_2M_UKB/metaCCA_snps_all_UKB.tsv"))
+metacca_snps<-read_tsv(paste0(data_path,"results/test_result_w12_UKB_NL/metaCCA_snps_all_UKB.tsv"))
+dim(metacca_snps)
+metacca_snps <- metacca_snps %>%
+                #filter(pval<0.01) %>%
+                #filter(r_1 >= 0.01) %>% 
+                arrange(desc(r_1)) %>% 
+                separate(SNP, sep="_", into=c("SNPS", "ref", "alt")) %>% 
+                mutate(gene = gsub("\\(0\\)", "", gene)) %>% 
+                separate_rows(gene, sep="\\|")  %>%  distinct() 
+```
+
+
+# SNPs based analysis data load
+```{r}
+# combine catalog with metaCCA result to get overview of previously repoted traits association 
+
+merged_full<- left_join(metacca_snps, catalog_sub, by = "SNPS") %>% 
+                      separate( "STRONGEST SNP-RISK ALLELE", sep="-", into=c("snp", "risk_allele")) %>% select(-snp) %>% 
+                      # compare ALT and risk allele
+                      mutate(alt_is_risk= ifelse(risk_allele == alt, "yes",
+                                           ifelse(risk_allele == "?", "?", "no"))) %>% 
+                      select(1:8, alt_is_risk, everything()) %>% 
+                      # compare gene name in data nad catalog
+                      mutate(gene_match= ifelse(gene == MAPPED_GENE, TRUE, FALSE)) %>% 
+                      select(1:10, gene_match, everything()) %>% 
+                      # compare gene name in data nad catalog
+                      separate_rows(gene, sep="\\|")  %>%  distinct() %>% 
+                      separate_rows(MAPPED_GENE, sep="\\,") %>%  distinct() 
+dim(merged_full)
+
+#View(merged)
+merged_matched_only<- inner_join(metacca_snps, catalog_sub, by = "SNPS") %>% 
+                      separate( "STRONGEST SNP-RISK ALLELE", sep="-", into=c("snp", "risk_allele")) %>% select(-snp) %>% 
+                      # compare ALT and risk allele
+                      mutate(alt_is_risk= ifelse(risk_allele == alt, "yes",
+                                           ifelse(risk_allele == "?", "?", "no"))) %>% 
+                      select(1:8, alt_is_risk, everything()) %>% 
+                      # compare gene name in data nad catalog
+                      mutate(gene_match= ifelse(gene == MAPPED_GENE, TRUE, FALSE)) %>% 
+                      select(1:10, gene_match, everything()) %>% 
+                      # compare gene name in data nad catalog
+                      separate_rows(gene, sep="\\|")  %>%  distinct() %>% 
+                      separate_rows(MAPPED_GENE, sep="\\,") %>%  distinct() 
+                      
+dim(merged_matched_only) 
+
+###ignore these ATM
+
+mismatch_genes<-merged_matched_only %>% filter(gene_match ==F) %>% pull(gene) %>% unique #446
+match_genes<-merged_matched_only %>% filter(gene_match ==T) %>% pull(gene) %>% unique #846
+
+length(intersect(mismatch_genes,match_genes)) #141 - we can drop those!
+genes_to_drop<-intersect(mismatch_genes, match_genes)
+
+merged_matched_only<-merged_matched_only %>% mutate (gene_match2 = ifelse(gene %in% genes_to_drop  & gene_match == FALSE , "drop", "OK") ) %>% 
+                                            select(1:11, gene_match2, everything()) %>%
+                                            filter(gene_match2 != "drop")
+
+
+#View(merged_matched_only)
+```
+
+# Gene based analysis dat load
+```{r}
+# Load metaCCA results for genes analysis
+metacca_genes<-read_tsv(paste0(data_path,"results/test_result_w11_r_2M_UKB/merge_results_UKB.tsv"))
+dim(metacca_genes)
+
+catalog_sub_gene<-catalog_sub %>% rename(gene=MAPPED_GENE)
+metacca_genes<-metacca_genes %>%
+                mutate(gene = gsub("\\(0\\)", "", gene)) %>% 
+                separate_rows(gene, sep="\\|")  %>%  distinct() %>% 
+                left_join(., catalog_sub_gene, by = "gene")
+View(merged_gene)
+
+# store results in a dict by gene name
+genes_result_dict<-list()
+for (gene_i in metacca_genes$gene){
+  genes_result_dict[[gene_i]]<-merged_gene %>% filter(gene == gene_i)
+}
+View(genes_result_dict[["DIS3L2"]])
+View(genes_result_dict[["AUTS2"]])
+
+# new dict with only keep SNP-trait paair for SNPs that were in the gene in the analysis
+genes_result_dict_sub<-list()
+for (gene_i in metacca_genes$gene){
+  gene_df<-genes_result_dict[[gene_i]]
+  snps_in_gene<-gene_df %>% pull(SNPs) %>% first %>%  str_split(., ",") %>% as_vector()  %>% gsub("_[ATCG]_[ATCG]", "", .)
+  gene_df<- gene_df %>% filter(SNPS %in% snps_in_gene)
+  if (dim(gene_df)[1] !=0 ){
+    genes_result_dict_sub[[gene_i]]<-gene_df}
+}
+View(genes_result_dict_sub[["DIS3L2"]])
+View(genes_result_dict_sub[["AUTS2"]])
+
+merged_genes_snps_with_traits<-bind_rows(genes_result_dict_sub)
+
+```
+
+
+
+
+
+
+# Trait summarising
+```{r}
+
+annotate_with_trait_summary <- function(merged_df){
+
+  traits_dict<- list(
+  
+    anthropometic = c("body fat", "bmi", "body mass", "waist-hip","hip circ", "waist", "body weight", "body height", "adipose", 
+            "physical activity", "obesity", "birth weight", "aspartate", "anthropometric", "sitting height ratio"),
+    cardiovascular = c("heart", "coronary", "cardiovas",'cardiac', "atherosclerosis", "atrial fibrillation","pressure",
+                       "hypertension", "pulse", "arter", "aortic", "venous thromboembolism", "electrocardiography"),
+    cancer = c("cancer", "carcin", "sarcom", "tumor", 'lymphom', 'neuroblastoma', 'glioma', "neoplas", "adenoma",
+               "amyloidosis","vascular endothelial growth factor", "nephroblastoma", "multiple myeloma"),
+    metabol = c("metabol", "lipid", "cholesterol", "triglycer", "HVA", "lipoprotein", "fatty acid", "glucose", "insulin",
+                "fenofibrate", "adiponectin", "HOMA", "type II diabetes",  "diabetes mellitus"),
+    bone = c("bone mineral", "bone density", "osteoarthritis", "bone size", "bone geometry",
+             "bone quantitative" , "fracture", "joint", "scoliosis", "intertrochanteric", "knee pain"),
+    psychiatric = c("depress", "schizop", "worr", "anxi", "autism", "bipolar","attention deficit hyperactivity disorder",
+                    'psychosis', 'anorexia nervosa', "behavioural disorder", "asperger", "ADHD", "bulimia nervosa",
+                    "conduct disorder", "obsessive-compulsive disorder", "neurotic disorder"),
+    neurological = c("stroke", "alzheim", "parkinson", "dementia", "cognitive", "migraine", "hippocampal", "white matter",
+              "amyloid", "brain", "Vitiligo", "tau", "intracranial", "cerebrospinal","cerebellum" , "epilepsy",
+              "Huntington"),
+    
+    lung_smoking = c("asthma", "lung", "capacity", "fev", "expiratory", "smok", "cigarett", "nicotine","pulmonary", 
+                     "emphysema", "respiratory"),
+    alcohol = c("alcohol dependence", "alcohol drinking", "alcohol consumption", "alcoholic beverage", "alcohol use", 
+                'alcoholic pancreatitis',	'drinking behavior'),
+    autoimmune = c("inflammatory bowel disease", "colitis", "crohn", "multiple sclerosis", "cirrhosis", "rheumatoid arthritis",
+                   "erythematosus", "type I diabetes", "autoimmune disease", "serum IgG glycosylation measurement","celiac",
+                   'esophagitis', 'allerg', 'ankylosing spondylitis', "autoimmune", "immune system", "Cystic fibrosis",
+                   "Sjogren syndrome", 'psoriasis', "eczema", "acne"),
+    aging = c('longevity' , 'aging', 'methylation'),
+    vision = c('myopia', 'eye measurement', 'glaucoma', 'astigmatism', 'corneal', 'eye morphology', "macula", "retinopathy"),
+    kidney =c ("nephrotic syndrome", "kidney disease","nephropathy" , 'glomerular', "urinary"),
+    personality = c('behavioural disorder', 'aggressive behavior', 'empathy measurement','gambling behaviour', 
+                    "irritability measurement", "risk-taking behaviour" , "behaviour","neuroticism",
+                    "guilt measurement"),
+    appearance = c("hair", "cleft", 'balding', 'facial hair', 'eye col', "facial", "freckles", "Hirsutism",
+                  "morphology", "alopecia", "lobe", "pigmentation", "sunburn", "suntan"),
+    education = c("mathematical ability", "spelling ability", "educational", "intelligence", "neuropsychological test",
+                  "memory performance","information processing speed", "cognition", "mental process", "word reading")
+    #medication = c("response to drug")
+    #hiv<-
+  )  
+  
+
+
+    traits_summary <- merged_df %>% 
+              select("DISEASE/TRAIT" , "MAPPED_TRAIT" ) %>% 
+              distinct() %>% 
+              mutate(trait_summary=ifelse( grepl(paste(traits_dict$bone, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "bone",
+                                   ifelse( grepl(paste(traits_dict$anthropometic, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "anthropometic",
+                                   ifelse( `DISEASE/TRAIT` == "Obesity-related traits", "anthropometic",       
+                                   #ifelse( grepl("Medication use" , `DISEASE/TRAIT`,  ignore.case=TRUE), "medication",      
+                                   #ifelse( grepl(paste(traits_dict$medication, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "medication", 
+                                   ifelse( grepl(paste(traits_dict$cardiovascular, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "cardiovascular", 
+                                   ifelse( grepl(paste(traits_dict$cancer, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "cancer", 
+                                   ifelse( grepl(paste(traits_dict$metabol, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "metabolic",
+                                   ifelse( grepl(paste(traits_dict$autoimmune, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "autoimmune",
+                                   ifelse( grepl(paste(traits_dict$psychiatric, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "psychiatric", 
+                                   ifelse( grepl(paste(traits_dict$neurological, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "neurological", 
+                                   ifelse( grepl(paste(traits_dict$lung_smoking, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "lung_and_smoking", 
+                                   ifelse( grepl(paste(traits_dict$alcohol, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "alcohol", 
+                                   ifelse( grepl(paste(traits_dict$aging, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "aging", 
+                                   ifelse( grepl(paste(traits_dict$vision, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "vision", 
+                                   ifelse( grepl(paste(traits_dict$kidney, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "kidney", 
+                                   ifelse( grepl(paste(traits_dict$appearance, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "appearance", 
+                                   ifelse( grepl(paste(traits_dict$personality, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "personality", 
+                                   ifelse( grepl(paste(traits_dict$education, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "education", 
+                                   "x_miscellaneous"))))))))))))))))))
+    
+    write_tsv(traits_summary, paste0(data_path, "gwas_catalog/traits_categories.tsv"))
+    return (traits_summary)
+    
+}
+
+# testing code
+out<-annotate_with_trait_summary(merged_full)
+View(out )
+out %>% select(trait_summary) %>% plyr::count() %>% arrange(freq)
+out %>% filter(trait_summary==0) %>% View()
+out %>% filter(trait_summary=="cancer") %>% View()
+
+```
+
+```{r}
+
+# anootate with trait snps results
+
+
+snps_out <- annotate_with_trait_summary(merged_full)
+snps_out %>% select(trait_summary) %>% plyr::count() %>% arrange(freq)
+
+with_trait<-left_join(merged_full, snps_out,
+                                by = c("MAPPED_TRAIT"="MAPPED_TRAIT" , "DISEASE/TRAIT"="DISEASE/TRAIT"))%>% 
+            select(c("gene" , "SNPS", "r_1" , "pval" , "DISEASE/TRAIT",  "MAPPED_TRAIT"  ,"trait_summary" )) 
+write_tsv(with_trait, paste0(data_path, "results/test_result_w12_UKB_NL/metaCCA_snps_all_UKB_annotated_w_traits.tsv"))
+
+
+```
+
+
+
+
+
