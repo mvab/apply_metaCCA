@@ -1,0 +1,67 @@
+---
+title: "manhattan_plot"
+author: "MV, based on http://www.danielroelfs.com/coding/manhattan_plots/"
+date: "11/11/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(readr)
+```
+
+```{r}
+data_path <- "/XremovedX/" 
+data<-read_tsv(paste0(data_path, "results/metaCCA_snps_all.tsv")) %>% select(1:3) %>% separate(SNP, c("SNP", "REF", "ALT"), sep="_")
+ref<-read_tsv(paste0(data_path,"genotype_matrix/annotated_genes.txt"), col_names=T) 
+# join to add chr pos
+data<-inner_join(data, ref, by=c("SNP"="SNP","ALT"="ALT","REF"="REF" ) )
+head(data)
+```
+ 
+For each chromosome, I extract the largest base pair position, put it in a list, and then in a temporary variable, I add the length of the previous chromosomes together and add them to the relative base pair position in the current chromosome and save it in a column called BPcum. 
+```{r}
+nCHR <- 22
+data$BPcum <- NA
+s <- 0
+
+nbp <- c()
+for (i in unique(data$CHR)){
+  nbp[i] <- max(data[data$CHR == i,]$BP)
+  data[data$CHR == i,"BPcum"] <- data[data$CHR == i,"BP"] + s
+  s <- s + nbp[i]
+}
+```
+
+```{r}
+axis.set <- data %>% 
+  group_by(CHR) %>% 
+  summarize(center = (max(BPcum) + min(BPcum)) / 2)
+
+ylim <- abs(floor(log10(min(data$pval)))) + 2
+
+sig <- 0.05 / nrow(data) # bonferoni: 0.05 divided by number of SNPs in summary statistics OR
+sig <- 5e-8 # 0.05 / 1e-6
+```
+
+```{r}
+manhplot <- ggplot(data, aes(x=BPcum, y=-log10(pval))) +
+  geom_point(aes(color=as.factor(CHR)), alpha = 0.75, size = 1.25) +
+  scale_color_manual(values = rep(c("#e0c304","#a315a4","#018ccb"), nCHR)) +
+  scale_x_continuous(label = axis.set$CHR, breaks = axis.set$center) +
+  #scale_y_continuous(expand = c(0,0), limits = c(0,ylim)) +       # this does nor work for the latest data
+  geom_hline(yintercept = -log10(sig), color = "grey40", linetype = "dashed") + 
+  labs(x = NULL, y = "-log10(pval from metaCCA)") + 
+  theme_minimal() +
+  theme( 
+    legend.position = "none",
+    panel.border = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(angle = 0, size = 6.6, vjust = 0.5)
+  )
+manhplot
+ggsave(paste0(data_path,"results/manhattanplot_new.png"), manhplot, width = 30, height = 20, units = "cm")
+```
+

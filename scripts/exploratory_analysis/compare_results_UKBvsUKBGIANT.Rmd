@@ -1,0 +1,187 @@
+---
+title: "results_cleaning_and_viz"
+author: "MV"
+date: "02/02/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(tidyr)
+library(data.table)
+library(dplyr)
+
+library(ggplot2)
+library(wesanderson)
+library(plotly)
+library(colorspace)
+library(cowplot)
+```
+
+```{r}
+data_path<-"/XremovedX/" # to use in Rstudio 
+#data_path<-"/projects/XremovedX/" #to use in terminal
+```
+
+```{r}
+#load data versions
+ukb_only<-fread((paste0(data_path,"results/test_result_w11_r_2M_UKB/metaCCA_snps_all_UKB.tsv")))
+ukb_giant<-fread((paste0(data_path,"results/test_result_w11_r_2M_UKB_GIANT/metaCCA_snps_all_UKB_GIANT.tsv")))
+
+with_trait<- read_tsv(paste0(data_path, "results/test_result_w11_r_2M_UKB/metaCCA_snps_all_UKB_annotated_w_traits.tsv")) %>% 
+              select("SNPS", "trait_summary", "MAPPED_TRAIT")
+
+dim(ukb_only)
+dim(ukb_giant)
+```
+
+```{r}
+# do comparisons
+ukb_only %>% filter(pval < 10e-8) %>% dim()
+ukb_giant %>% filter(pval < 10e-8) %>% dim()
+
+ukb_only %>% filter(r_1 > 0.01) %>% dim()
+ukb_giant %>% filter(r_1 > 0.01) %>% dim()
+
+
+ukb_only_top<- ukb_only %>%
+  filter(pval < 10e-8) %>% 
+  filter(r_1 > 0.05)
+
+ukb_giant_top<- ukb_giant %>%
+  filter(pval < 10e-8) %>% 
+  filter(r_1 > 0.05)
+
+dim(ukb_only_top)
+dim(ukb_giant_top)
+
+
+length(intersect(ukb_only_top$SNP , ukb_giant_top$SNP))
+snp_list<-intersect(ukb_only_top$SNP , ukb_giant_top$SNP)
+```
+
+```{r}
+# create merged data
+
+# update to data-specifc colnames
+ukb_only <- ukb_only %>%  rename(r_1_ukb=r_1) %>% rename(pval_ukb=pval)
+ukb_giant <- ukb_giant %>%  rename(r_1_giant=r_1) %>% rename(pval_giant=pval)
+
+# merge data, update missing fields
+merged_r<- inner_join(ukb_only,ukb_giant, by=c("gene"= "gene", "SNP"="SNP")) %>% 
+          select(SNP, gene, r_1_ukb,  r_1_giant, pval_ukb, pval_giant) %>% 
+          mutate(pval_ukb=ifelse( is.na(pval_ukb), 1, pval_ukb)) %>% 
+          mutate(pval_giant=ifelse( is.na(pval_giant), 1, pval_giant) ) %>% 
+          mutate(r_1_ukb=ifelse( is.na(r_1_ukb), 0, r_1_ukb)) %>% 
+          mutate(r_1_giant=ifelse( is.na(r_1_giant), 0, r_1_giant) )
+
+# exploratory difference
+merged_r$r_diff<-round(abs(merged_r$r_1_ukb - merged_r$r_1_giant),2)
+merged_r$p_diff<-round(abs(merged_r$pval_ukb - merged_r$pval_giant),2)
+
+# add categotial variable
+merged_r<- merged_r %>% 
+          mutate(significance = ifelse(pval_ukb < 10e-8 & pval_giant < 10e-8, "both",
+                                ifelse(pval_ukb < 10e-8 , "only in UKB",
+                                ifelse(pval_giant < 10e-08 , "only in UKB+GIANT", "neither"))))
+
+
+## merged with trait annotation
+merged_r <- merged_r %>%  separate("SNP", into=c("SNPS", "ref", "alt"), sep="_") %>% 
+            left_join(., with_trait, by=c("SNPS")) %>% 
+            unite(col="SNP", SNPS:alt, sep="_" ) %>% 
+            # if no annotation present, set to value whick will be used for alpha
+            mutate(trait_match = ifelse(is.na(trait_summary), 0.05, 1)) %>% 
+            # also replane NA with string x_NA (otherwise plotting functions complain)
+            mutate(trait_summary=ifelse(is.na(trait_summary), "x_NA", trait_summary ))
+
+
+
+#merged_r %>% filter(SNP %in% snp_list) %>% View()
+merged_r %>% select(SNP,r_1_ukb,  r_1_giant,   pval_ukb, pval_giant, r_diff, p_diff) %>% 
+            write_tsv(paste0(data_path, "results/test_result_w11_r_2M_UKB/matrix_results_comparison.tsv"))
+```
+
+```{r}
+# scatterplot of r_1 values, coloured by p-val categories
+pal<-wes_palette("Darjeeling1")[c(2,1,3,5)]
+
+p<-ggplot(data = merged_r,
+          mapping = aes(x = r_1_ukb, y = r_1_giant, 
+                      colour=significance, label = SNP, label2=gene, label3=trait_summary)) + 
+  geom_point()+
+  labs(y = " UKB + GIANT", x = "UKB only",
+       colour="p-value < 10e-8",
+       title="Scatter plot of Canonical Correlation (CC) value (r_1)")+
+  theme_minimal()+
+  scale_colour_manual(values = pal)+
+  geom_hline(yintercept=0.01, linetype="dashed", color = "darkgrey")+
+  geom_vline(xintercept=0.01, linetype="dashed", color = "darkgrey")
+
+```
+
+```{r}
+# scatter plot with trait_summary labels by colour
+megapal <- c("#78B7C5", "#EABE94", "#EBCC2A", "#FF0000", "#3B9AB2" , "#B40F20", "#0B775E",
+             "#F2300F", "#DD8D29",  "#5BBCD6", "#E2D200" , "#F98400", "#46ACC8", "#00A08A",
+             "#F98400", "#46ACC8", "#00A08A", "grey")
+
+#merged_r<-merged_r[complete.cases(merged_r),]
+p<-ggplot(data = merged_r,
+          mapping = aes(x = r_1_ukb, y = r_1_giant, 
+                      colour=trait_summary, label = SNP, label2=gene, label3=trait_summary, alpha= trait_match)) + 
+  geom_point()+
+  labs(y = " UKB + GIANT", x = "UKB only",
+       colour="Trait summary",
+       title="Scatter plot of Canonical Correlation (CC) value (r_1)")+
+  theme_minimal()+
+  scale_colour_manual(values = megapal)+
+  scale_alpha()+
+  guides(alpha = FALSE)+
+  geom_hline(yintercept=0.01, linetype="dashed", color = "darkgrey")+
+  geom_vline(xintercept=0.01, linetype="dashed", color = "darkgrey")
+
+```
+
+```{r}
+library(viridisLite)
+
+merged_r2<-merged_r[complete.cases(merged_r),] # only annotated with traits
+merged_r3<-merged_r %>% filter(r_1_giant < 0.2) # truy without max outlier
+
+p<-ggplot(data = merged_r2,
+          mapping = aes(x = r_1_ukb, y = r_1_giant, 
+                      colour=r_diff, label = SNP, label2=gene, label3=trait_summary)) + 
+  geom_point()+
+  labs(y = " UKB + GIANT", x = "UKB only",
+       colour="r_1 difference",
+       title="Scatter plot of Canonical Correlation (CC) value (r_1)")+
+  theme_minimal()+
+  scale_colour_viridis_c()+
+  ylim(0,0.22)+xlim(0,0.17)+
+  #scale_colour_manual(values = megapal)+
+  #scale_alpha()+
+  guides(alpha = FALSE)+
+  geom_hline(yintercept=0.01, linetype="dashed", color = "darkgrey")+
+  geom_vline(xintercept=0.01, linetype="dashed", color = "darkgrey")
+p
+
+```
+
+
+
+```{r}
+ply <- ggplotly(p)
+
+```
+
+```{r}
+# make a counts table
+r_diff_traits_counts<- merged_r %>% 
+                        dplyr::count(trait_summary, r_diff) %>% 
+                        spread(key = r_diff,value = n) %>% 
+                        replace(., is.na(.), 0) %>% 
+                        column_to_rownames('trait_summary')
+```
+

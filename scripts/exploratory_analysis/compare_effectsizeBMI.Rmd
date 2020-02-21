@@ -1,0 +1,298 @@
+---
+title: "effect_size plot"
+author: "MV"
+date: "06/02/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(tidyr)
+library(data.table)
+library(tibble)
+library(dplyr)
+
+library(ggplot2)
+library(wesanderson)
+library(plotly)
+library(colorspace)
+library(cowplot)
+```
+
+```{r}
+data_path<-"/XremovedX/" # to use in Rstudio
+#local:
+#data_path<-"XremovedX/"
+#data_path<-"/projects/XremovedX/" #to use in terminal
+
+univariate_results<-"test_result_w11_r_2M_UKB/"
+```
+
+```{r}
+#load data versions
+load(paste0(data_path,"S_XY_matrices/geno-pheno_matrix_UKB_GIANT_2M.RData"))
+bmi_giant<-s_xy %>% select(3,4) %>% rownames_to_column('rsid')
+rm(s_xy)
+load(paste0(data_path,"S_XY_matrices/geno-pheno_matrix_UKB_2M.RData"))
+bmi_ukb<-s_xy %>% select(7,8) %>% rownames_to_column('rsid')
+rm(s_xy)
+
+# load snps that were returned by metacca + annotations
+with_trait<- read_tsv(paste0(data_path, "results/", univariate_results,"/metaCCA_snps_all_UKB_annotated_w_traits.tsv")) 
+
+# merge by rsid column
+merged_bmi<- inner_join(bmi_giant, bmi_ukb, by="rsid") %>% 
+            # subset only to SNPs that were returned by metacca (requred some manipulations)
+            separate("rsid", into=c("SNPS", "ref", "alt"), sep="_") %>% 
+            inner_join(., with_trait, by=c("SNPS")) %>% 
+            unite(col="rsid", SNPS:alt, sep="_" ) 
+
+rm(bmi_giant)
+rm(bmi_ukb)
+rm(with_trait)
+```
+
+
+
+```{r}
+
+merged_bmi<- merged_bmi %>%
+          mutate(beta_direction = ifelse(`ieu-a-2_b` < 0 & `UKB-b-19953_b` < 0, "both negative",
+                                  ifelse(`ieu-a-2_b` > 0 & `UKB-b-19953_b` > 0, "both positive",
+                                  ifelse(`ieu-a-2_b` == 0 & `UKB-b-19953_b` >  0, "zero in GIANT, positive in UKB",
+                                  ifelse(`ieu-a-2_b` == 0 & `UKB-b-19953_b` <  0, "zero in GIANT, negative in UKB",
+                                  ifelse(`ieu-a-2_b` > 0 & `UKB-b-19953_b` ==  0, "zero UKB, positive in GIANT,",
+                                  ifelse(`ieu-a-2_b` < 0 & `UKB-b-19953_b` ==  0, "zero in UKB, negative in GIANT,",     
+                                  ifelse(`ieu-a-2_b` > 0 & `UKB-b-19953_b` < 0, "positive in GIANT, negative in UKB",
+                                  ifelse(`ieu-a-2_b` < 0 & `UKB-b-19953_b` > 0, "negative in GIANT, positive in UKB",  "other")))))))))       
+
+merged_bmi %>% select(beta_direction) %>% count(beta_direction) %>% arrange(desc(beta_direction))
+#merged_bmi %>% filter(beta_direction== "other") %>%  View()
+
+
+# add log2 cols 
+get_10perc_smaller<-function(data_vector){
+  x<-abs(data_vector)
+  x2<-x[x!=0]
+  x3<-min(x2)-min(x2)*0.1
+  return(x3)
+}
+
+
+merged_bmi_log<- merged_bmi %>% 
+              # replcae zeros with pseudocount of 1
+              mutate(`ieu-a-2_b`= ifelse(`ieu-a-2_b`== 0, get_10perc_smaller(merged_bmi$`ieu-a-2_b`), `ieu-a-2_b`)) %>% 
+              mutate(`UKB-b-19953_b`= ifelse(`UKB-b-19953_b`== 0, get_10perc_smaller(merged_bmi$`UKB-b-19953_b`), `UKB-b-19953_b`)) %>% 
+              # apply log2 to beta valaues (abs values - becuse youcant log negative) 
+              mutate(`ieu-a-2_b_log2` = log2(abs(`ieu-a-2_b`))) %>% 
+              mutate(`UKB-b-19953_b_log2` = log2(abs(`UKB-b-19953_b`))) %>% 
+              # if the non-logged value was negative, we multiply it by -1 to chnge the sign on them
+              mutate(`UKB-b-19953_b_log2`= ifelse(`UKB-b-19953_b`< 0, `UKB-b-19953_b_log2`*-1, `UKB-b-19953_b_log2`)) %>% 
+              mutate(`ieu-a-2_b_log2`= ifelse(`ieu-a-2_b`< 0, `ieu-a-2_b_log2`*-1, `ieu-a-2_b_log2`)) 
+
+   
+log2(0.01)  #  -6.643856       
+merged_bmi_log<-merged_bmi_log %>%  
+   mutate(beta_0.01 =  ifelse(abs(`ieu-a-2_b_log2`) <= abs(log2(0.01)) & abs(`UKB-b-19953_b_log2`) <= abs(log2(0.01)) , "both large beta ",
+                       ifelse(abs(`ieu-a-2_b_log2`) > abs(log2(0.01)) & abs(`UKB-b-19953_b_log2`) > abs(log2(0.01)) , "both small beta ",  
+                       ifelse(abs(`ieu-a-2_b_log2`) > abs(log2(0.01)) & abs(`UKB-b-19953_b_log2`) <= abs(log2(0.01)) , "small beta GIANT, large in UKB ",   
+                       ifelse(abs(`ieu-a-2_b_log2`) <= abs(log2(0.01)) & abs(`UKB-b-19953_b_log2`) > abs(log2(0.01)) , "small beta UKB, large in GIANT ",  
+                        "other")))))
+
+merged_bmi_log %>% select(beta_0.01) %>% count(beta_0.01) %>% arrange(desc(beta_0.01))
+
+# view subset
+merged_bmi_log %>% select(1,2,4,11:15) %>% View()
+
+```
+
+```{r}
+# scatterplot
+pal<-c(wes_palette("Darjeeling1"), "darkgreen")
+megapal <- c("#78B7C5", "#EABE94", "#EBCC2A", "#FF0000", "#3B9AB2" , "#B40F20", "#0B775E",
+             "#F2300F", "#DD8D29",  "#5BBCD6", "#E2D200" , "#F98400", "#46ACC8", "#00A08A",
+             "#F98400", "#46ACC8", "#00A08A", "grey")
+
+merged_bmi2<-merged_bmi[complete.cases(merged_bmi),]
+p<-ggplot(data = merged_bmi,
+          mapping = aes(y = `ieu-a-2_b`, x = `UKB-b-19953_b`,
+                      colour=beta_direction, label = rsid, label2=trait_summary)) +
+  geom_point(alpha=0.5)+
+  labs(y = "GIANT BMI effect size", x = "UKB BMI effect size",
+       colour="effect size (raw value)",
+       title="Scatter plot of BMI effect size (beta)",
+       subtitle="    50K SNPs only (used in metaCCA)")+
+  theme_minimal()+
+  scale_colour_manual(values = pal)+
+  guides(color= guide_legend(override.aes = list(alpha = 1)))+
+  #theme(legend.position = "none") +
+  ylim(-0.20, 0.20)+xlim(-0.20, 0.20)
+  #ylim(-0.21, 0.21)+xlim(-0.21, 0.21)+
+  #geom_hline(yintercept=0.05, linetype="dashed", color = "darkgrey")+
+  #geom_vline(xintercept=0.05, linetype="dashed", color = "darkgrey")+
+  #geom_hline(yintercept=-0.05, linetype="dashed", color = "darkgrey")+
+  #geom_vline(xintercept=-0.05, linetype="dashed", color = "darkgrey")
+
+pal2<- wes_palette("Darjeeling2")
+p<-ggplot(data = merged_bmi_log,
+          mapping = aes(y = `ieu-a-2_b_log2`, x = `UKB-b-19953_b_log2`,
+                      colour=beta_0.01, label = rsid)) +
+  geom_point(alpha=0.5)+
+  labs(y = " GIANT BMI effect size, log2 scale", x = "UKB BMI effect size, log2 scale",
+       colour="Effect size threshold: \n small <= 0.01 < large",
+       title="Scatter plot of BMI effect size (beta), on log2 scale",
+       subtitle="    50K SNPs only (used in metaCCA)")+
+  theme_minimal()+
+  theme(legend.position = "right")+
+  scale_colour_manual(values = pal2)+
+  #ylim(-25, 25)+xlim(-25, 25)+
+  guides(color= guide_legend(override.aes = list(alpha = 1)))
+  #ylim(-31, 31)+xlim(-31, 31)
+    
+    
+  #geom_hline(yintercept=0.01, linetype="dashed", color = "darkgrey")+
+  #geom_vline(xintercept=0.01, linetype="dashed", color = "darkgrey")
+```
+
+```{r}
+ply <- ggplotly(p)
+```
+
+
+```{r}
+# faceted barchart on log2 data
+
+merged_bmi_log_long<- merged_bmi_log %>% 
+  select(rsid, `ieu-a-2_b_log2`, `UKB-b-19953_b_log2`) %>% 
+  rename(GIANT_BMI =`ieu-a-2_b_log2`) %>% 
+  rename(UKB_BMI =`UKB-b-19953_b_log2`) %>% 
+  pivot_longer(cols=c(GIANT_BMI, UKB_BMI), names_to= "dataset", values_to="log2values")
+
+
+
+p<-ggplot(merged_bmi_log_long, aes(x=log2values, fill = dataset, colour=dataset)) + 
+  geom_histogram( binwidth = 0.3, alpha= 0.3, position="identity")+
+  theme_minimal()+
+  theme(legend.position="bottom")+
+  scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9"))+
+  scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9"))+
+  facet_grid(dataset ~ .)+
+  labs(y = " count", x="log2 effect size",
+       title="Histogram of BMI effect size (beta), on log2 scale")
+  p
+
+
+```
+
+```{r}
+# faceted barchart on raw data
+
+merged_bmi_long<- merged_bmi %>% 
+  select(rsid, `ieu-a-2_b`, `UKB-b-19953_b`) %>% 
+  rename(GIANT_BMI =`ieu-a-2_b`) %>% 
+  rename(UKB_BMI =`UKB-b-19953_b`) %>% 
+  pivot_longer(cols=c(GIANT_BMI, UKB_BMI), names_to= "dataset", values_to="beta_values")
+
+
+
+p<-ggplot(merged_bmi_long, aes(x=(beta_values), fill = dataset, colour=dataset)) + 
+  geom_histogram( binwidth = 0.002, alpha= 0.3, position="identity")+
+  theme_minimal()+
+  theme(legend.position="bottom")+
+  scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9"))+
+  scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9"))+
+  facet_grid(dataset ~ .)+
+  labs(y = " count", x="effect size",
+       title="Histogram of BMI effect size (beta)")
+  p
+
+
+```
+
+
+
+
+```{r}
+# combing data from beta and r_1
+
+r1_data<-read_tsv(paste0(data_path, "results/", univariate_results,"/matrix_results_comparison.tsv"))
+combined<- inner_join(r1_data, merged_bmi_log[,c(1,2,4,11,13,14)], by = c("SNP"="rsid"))
+
+
+combinedX<-combined %>% select(-trait_summary)
+
+p<-ggplot(data = combinedX,
+          mapping = aes(y = r_1_giant, x = `ieu-a-2_b_log2`,
+          #mapping = aes(y = r_1_ukb, x = `UKB-b-19953_b_log2`,
+                       label = SNP)) +
+  geom_point()+
+  labs(y = "r_1", x = "beta")+
+       #colour="effect size (raw value)",
+       #title="Scatter plot of BMI effect size (beta)",
+       #subtitle="    50K SNPs only (used in metaCCA)")+
+  theme_minimal()
+ 
+
+```
+
+```{r}
+# create combined data in a log format
+
+combined_long<- combined %>% 
+  # keep only 'significant' data for this viz
+  #filter(pval_ukb < 10e-8) %>% filter(pval_giant < 10e-8) %>% 
+  # drop unneeded cols
+  select(-c( "pval_ukb" , "pval_giant", "p_diff")) %>% 
+  # iteratively rename columns and pivot them to longer format
+  # first do beta
+  rename(GIANT =`ieu-a-2_b`) %>% 
+  rename(UKB =`UKB-b-19953_b`) %>% 
+  pivot_longer(cols=c(GIANT, UKB), names_to= "dataset_beta", values_to="beta_values") %>% 
+  # repeat for beta_log2
+  rename(GIANT =`ieu-a-2_b_log2`) %>% 
+  rename(UKB =`UKB-b-19953_b_log2`) %>% 
+  pivot_longer(cols=c(GIANT, UKB), names_to= "dataset_beta_log2", values_to="beta_log2_values") %>% 
+  # repeat for r_1
+  rename(GIANT = r_1_giant) %>% 
+  rename(UKB = r_1_ukb) %>% 
+  pivot_longer(cols=c(GIANT, UKB), names_to= "dataset_r_1", values_to="r_1_values") %>% 
+  # find rows where dataset names match in all 3 columns (that's why I was giving them simple names)
+  mutate(allSame = ifelse(dataset_beta == dataset_beta_log2 & dataset_beta_log2 == dataset_r_1, 1, 0)) %>% 
+  # keep only those that match, the rest is redundant info
+  filter(allSame == 1) %>% 
+  # drop no longer needed cols and rename dataset col
+  select(-c(allSame, dataset_beta_log2,dataset_r_1)) %>% 
+  rename(dataset=dataset_beta) %>% 
+  #filter(r_diff>0.01) %>% 
+  #dummy variable
+  mutate(r_diff100=r_diff*100)
+
+
+p<-ggplot(data = combined_long,
+          mapping = aes(y = r_1_values, x = beta_values, colour=dataset, # size=r_diff100,
+                       label = SNP)) +
+  geom_point(alpha=0.2)+
+  #facet_grid(dataset ~ .)+
+  scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9"))+
+  labs(y = "SNP CC value (r_1) from metaCCA analysis",
+       x = "SNP effect size (beta) for BMI",
+       colour="Analysis/Dataset",
+       #size= "r_1 value differnce \n between analyses",
+       title="Relationship between BMI effect size (beta) in UKB/GIANT datasets and \nmetaCCA CC value (r_1) of UKB-only/UKB+GIANT analysis",
+       subtitle="showing data for SNPs with r_1 difference < 0.01 between the analyses")+
+  theme_minimal()+
+  theme(legend.position = "top") +
+  guides(size = FALSE,
+         color= guide_legend(override.aes = list(alpha = 1)))
+p
+```
+
+```{r}
+ply <- ggplotly(p)
+```
+
+  
+
+  
+

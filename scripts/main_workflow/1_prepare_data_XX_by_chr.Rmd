@@ -1,0 +1,85 @@
+---
+title: "metaCCA analysis of bmi-related traits"
+author: "MV"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(data.table)
+library(tibble)
+```
+
+### NB can't run this in Rstudio : run interactively in R on terminal 
+
+
+Load gene annotation data
+```{r}
+data_path<-"/XremovedX/" # to use in Rstudio 
+#data_path<-"/projects/XremovedX/" #to use in terminal
+
+# set case number and files
+case <- 3 # (see readme)
+ref<-read.table(paste0(data_path,"genotype_matrix_", case,"/annotated_genes.txt"), header=T, stringsAsFactors = F)
+dim(ref)
+```
+
+
+
+```{r}
+for (chr in c(1:22)) {
+  
+  print(paste0("Processing chromosome ", chr))
+
+  #load matrix for chr
+  ld_matrix <- paste0(data_path, "genotype_matrix_", case,"/ld_matrix_by_chr/ld_matrix_chr", chr, ".ld")
+  s_xx <- as.data.frame(fread(ld_matrix))
+  print(paste0("SNPs: ",dim(s_xx)[1]))
+  
+  # subset ref to this chr
+  ref_chr<- ref %>% filter(CHR == chr)
+
+  # check that they match
+  if (dim(s_xx)[1] != dim(ref_chr)[1]){
+    stop(paste0("Dimension of LD matrix and gene annotations are different for chr", chr))}
+  
+  # add rsids and alleles to rows and cols
+  with_alleles=T
+  if (with_alleles){ 
+    rownames(s_xx) <- colnames(s_xx) <- paste(ref_chr$SNP, ref_chr$REF, ref_chr$ALT, sep="_")
+  } else {
+    rownames(s_xx) <- colnames(s_xx) <- ref_chr$SNP
+  }
+
+  # check if there are nany NaN values
+  if (sum(is.na(s_xx)) != 0){
+    print(paste0("The matrix contains NaN values"))
+    
+    tmp<-s_xx %>%
+      select(everything()) %>%  
+      summarise_all(funs(sum(is.na(.)))) %>% 
+      as.data.frame() %>% t() %>% as.data.frame() %>% 
+      rownames_to_column("rsid") %>% 
+      dplyr::filter(V1 > 1)
+      # also could vbe a case of 2 snps obly matching ech other: need to review manually
+    
+    cat('-------- WARNING ------')
+    print(tmp)
+    
+    }
+  
+  
+  # save as RData
+  save(s_xx, file=paste0(data_path,"S_XX_matrices/LDmatrix_chr",chr,".RData"))
+  rm(s_xx)
+
+  print("Done.")
+  cat("\n")
+}
+```
+
+
+
+

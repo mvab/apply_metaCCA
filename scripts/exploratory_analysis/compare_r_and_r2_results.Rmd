@@ -1,0 +1,93 @@
+---
+title: "Untitled"
+author: "MV"
+date: "15/01/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(readr)
+library(tidyr)
+library(data.table)
+```
+
+```{r}
+data_path<-"/XremovedX/" # to use in Rstudio 
+#data_path<-"/projects/XremovedX/" #to use in terminal
+```
+
+```{r}
+r<-read_tsv(paste0(data_path, "results/merge_results.tsv"))
+r2<-read_tsv(paste0(data_path, "results/test_result_w11_r2/merge_results.tsv"))
+```
+```{r}
+r_genes<-pull(r, gene)
+print(length(r_genes))
+r2_genes<-pull(r2, gene)
+print(length(r2_genes))
+print(length(intersect(r_genes, r2_genes)))
+
+# with r2 we found more genes;
+# all genes found with r are also found in r2
+```
+```{r}
+r_sub<-filter(r, pval < 0.05)
+r2_sub<-filter(r2, pval < 0.05)
+
+r_sub_genes<-pull(r_sub, gene)
+print(length(r_sub_genes))
+r2_sub_genes<-pull(r2_sub, gene)
+print(length(r2_sub_genes))
+
+print(length(intersect(r_sub_genes, r2_sub_genes)))
+
+# if we look at gene with arbitary pval cutoff 0.05 we get some difference
+```
+```{r}
+r_sub2<-filter(r, r_1 >= 0.01)
+r2_sub2<-filter(r2, r_1 >= 0.01)
+
+r_sub2_genes<-pull(r_sub2, gene)
+print(length(r_sub2_genes))
+r2_sub2_genes<-pull(r2_sub2, gene)
+print(length(r2_sub2_genes))
+
+print(length(intersect(r_sub2_genes, r2_sub2_genes)))
+
+# if we look at gene with arbitary r_1 >= 0.01 cutoff we get some difference
+
+```
+```{r}
+# combine both cutoffs
+r_sub3<-filter(r, r_1 >= 0.01 & pval < 0.01)
+r2_sub3<-filter(r2, r_1 >= 0.01 & pval < 0.01)
+
+r_sub3_genes<-pull(r_sub3, gene)
+print(length(r_sub3_genes))
+r2_sub3_genes<-pull(r2_sub3, gene)
+print(length(r2_sub3_genes))
+
+print(length(intersect(r_sub3_genes, r2_sub3_genes)))
+(intersect(r_sub3_genes, r2_sub3_genes))
+
+
+```
+
+```{r}
+r <- r %>%  rename(r_1_r=r_1) %>% rename(pval_r=pval)
+r2 <- r2 %>%  rename(r_1_r2=r_1) %>% rename(pval_r2=pval)
+
+merged_r<- left_join(r2,r, by=c("gene"= "gene", "SNPs"="SNPs", "snps_count"='snps_count')) %>% 
+            select(gene, r_1_r, r_1_r2, pval_r, pval_r2)
+
+merged_r$r_diff<-round(abs(merged_r$r_1_r - merged_r$r_1_r2),1)
+merged_r$p_diff<-round(abs(merged_r$pval_r - merged_r$pval_r2),2)
+
+merged_r %>%  filter(pval_r < 0.01) %>%  filter (pval_r2 < 0.01) %>% 
+              filter(r_1_r >= 0.01) %>%  filter (r_1_r2 >= 0.01) %>% View()
+
+# looks like r2 hight values are 
+```
+

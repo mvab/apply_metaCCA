@@ -1,0 +1,148 @@
+---
+title: "standardise_nealelab_data"
+author: "MV"
+date: "22/01/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(readr)
+library(tidyr)
+library(data.table)
+library(stringr)
+library(purrr)
+library(tibble)
+```
+
+
+```{r}
+data_path<-"/XremovedX/" # to use in Rstudio 
+```
+
+
+
+Read in each file and update the rsids, then subset to varints that are shared with IEU UKB results
+```{r}
+# read in the files into a list
+prefix<-"ukb/nealelab/"
+all.files <- list.files(path = paste0(data_path, "S_XY_matrices/", prefix), pattern = "*gwas.tsv", full.names = T)
+#all.files<-all.files[1]
+l <- lapply(all.files, fread, sep="\t")
+```
+
+```{r}
+# update beta and se columns in each trait to fit the required naming convention
+
+update_colnames<-function(df, filename){
+  # get col endings, ie beta and se
+  col_ending <- gsub("eta", "", colnames(df)[3:4] )
+  # extarct trait id number
+  trait_id <- filename %>% str_match_all("[0-9]+") %>% unlist %>% last
+  # add trait id to new col names
+  new_col_names <- paste0("UKB-neale-", trait_id, "_", col_ending )
+  # rename df cols
+  colnames(df)[3:4]<-new_col_names
+  return(df)
+}
+
+for (i in 1:length(all.files)){
+  l[[i]] <- update_colnames(l[[i]], all.files[i])
+}
+
+```
+
+
+```{r}
+# load variant-rsid key from Nealelab, and subset to rsid that are available in the IEU UKB data (already overlapped with 1KGP reference)
+variants.raw<- fread(paste0(data_path, "snp_lists/variants_nealelab.tsv"))
+common_snps<- fread(paste0(data_path, "snp_lists/ukb_ieu_nealelab_common_snps_rsid.txt")) %>% as_vector() %>% unname() # see readme for how this file was created
+
+variants<-variants.raw %>%
+              # suset to snps found in both ieu and nl data
+              filter(rsid %in% common_snps) %>% 
+              # rename and drop not needed cols
+              rename(allele_0 = ref) %>% 
+              rename(allele_1 = alt) %>% 
+              select(-c(chr, pos))
+
+dim(variants)
+head(variants)
+```
+
+```{r}
+df <-  l %>% 
+    # merge gwas in lists into one df
+    reduce(left_join, by = c("variant"="variant", "minor_allele"="minor_allele")) %>% 
+    # merge them with variant to get rsid (and subset to common markers with IEU UKB data)
+    inner_join(variants, ., by = "variant") %>% 
+    # drop nit needed cols
+    select(-c(minor_allele, variant)) %>% 
+    # move rsid col to the front
+    select (rsid, everything()) 
+
+head(df)
+```
+
+
+```{r}
+# save a df for each trait 
+for (filename in all.files){
+  # extract trait id number
+  trait_id <- filename %>% str_match_all("[0-9]+") %>% unlist %>% last
+  print(trait_id)
+  # extract 3 cols + cols for the trait
+  sub_df <-df %>% select(rsid, allele_0, allele_1, contains(trait_id ) )
+  write_tsv(sub_df, paste0(data_path, "S_XY_matrices/ukb/UKB-neale-", trait_id,".tsv") )
+}
+```
+
+
+
+
+##### other effort
+
+```{r}
+df <-  l %>% 
+    # merge gwas in lists into one df
+    reduce(left_join, by = c("variant"="variant", "minor_allele"="minor_allele")) %>% 
+    # merge them with variant to get rsid (and subset to common markers with IEU UKB data)
+    inner_join(variants, ., by = "variant") 
+  
+df_tmp<- df %>% 
+      mutate(effect_match = ifelse(allele_1_nl == allele_1_ukb, 1, 0))
+
+diff_effect_allele<-df_tmp %>% filter(effect_match == 0 ) %>%  pull(rsid) %>%  unique # 14252
+same_effect_allele<-df_tmp %>% filter(effect_match == 1 ) %>%  pull(rsid) %>%  unique # 9626149
+
+# case when there is a least one rsid_alleles match, so we want to keep this rsid, but only remove mismatched variant
+match_present <- unique(intersect(diff_effect_allele, same_effect_allele)) # 14186
+# case where effect has been measured in colmpletely diff alleles so we can't combine them; need to drop these rsids from the analysis.
+no_matches <- unique(setdiff(diff_effect_allele, same_effect_allele)) # 66
+
+vars_to_drop<-df_tmp %>%
+        filter(rsid %in% match_present) %>%
+        filter(effect_match == 0) %>%
+        select(rsid, variant) ###### these varints will be dropped from S_XY
+
+
+df<- df_tmp %>% 
+      filter(!variant %in% vars_to_drop$variant) %>% 
+      filter(!rsid %in% no_matches) %>% 
+      select(-c('variant', 'effect_match', 'minor_allele'))
+
+df_out <- df %>% 
+      mutate(rsid = paste0(rsid, "_", allele_0_nl, "_", allele_0_nl)) %>% 
+      select(-c('allele_0_ukb', 'allele_1_ukb')) %>% 
+      rename(allele_0 = allele_0_nl) %>% 
+      rename(allele_1 = allele_1_nl) 
+
+# this df is ready to be saved as s_xy; thn inner join it with data from IEU UKB
+
+# this is the list of rsid to drop from ref data and redo
+no_matches
+also any things that got removed when first merged
+
+```
+

@@ -1,0 +1,53 @@
+---
+title: "biobank_traits_parser"
+author: "MV"
+date: "8 October 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+```{r}
+# fill list of UKBB traits; contains traits only with "UKB" identifier
+data<-read_tsv("study-table-13-02-19_UKBonly.tsv")  %>%  separate(id, c("id", "id_no"), sep=':') 
+dim(data)
+
+# list of traits that passed QC and can be used 
+passed_QC<-read_tsv("ukb_id_keep.txt", col_names = "id") %>%  separate(id, c("id", "id_no"), sep='b-') 
+dim(passed_QC)
+
+# subset full list to traits that passed QC
+data<-data %>% filter(id_no %in% passed_QC$id_no)
+dim(data)
+```
+
+```{r}
+# select continous traits
+data %>% count(category)
+data %>% filter(category=='Continuous') %>% dim()
+dataset<-data %>% filter(category=='Continuous') 
+
+# save selected traits as table and a list of ids
+write_tsv(dataset, "UKB_traits_continious.tsv")
+dataset %>% select(id_no) %>% write_tsv( "UKB_traits_continious_id.tsv", col_names = F)
+```
+
+
+```{r}
+
+# select diabetes/obesity related traits
+trait_list<-c( 'bmi',  'waist', 'body fat', 'blood pressure, auto') #'glucose', 'fasting','lipoprotein'
+trait_df<-data.frame()
+for (i in trait_list){
+  tmp<-data %>% filter( str_detect(trait, fixed(i, ignore_case=T)))
+  trait_df<-rbind(trait_df,tmp)
+} 
+#View(trait_df)
+# save selected traits as table and a list of ids
+write_tsv(trait_df, "UKB_traits_bmi.tsv")
+trait_df %>% select(id_no) %>% write_tsv( "UKB_traits_bmi_id.tsv", col_names = F)
+```
+
