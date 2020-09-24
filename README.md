@@ -87,7 +87,8 @@ While exploting metaCCA, I have done several case studies to investigate various
 ```
 ── main_workflow
 │   ├── select_traits/biobank_traits_parser.Rmd
-│   ├── parse_gwas_vcf.sh
+│   ├── parse_gwas_vcf.sh *OR*
+│   ├── parse_gwas_vcf_snakemake/ 
 │   ├── 0_standardise_nealelab_data.Rmd
 │   ├── 1_prepare_data_XX_by_chr.Rmd
 │   ├── 2_prepare_data_XY.Rmd
