@@ -21,6 +21,7 @@ library(cowplot)
 ```
 
 ```{r}
+
 data_path<-"/XremovedX/" # to use in Rstudio
 #local:
 #data_path<-"XremovedX/"
@@ -31,7 +32,8 @@ univariate_results<-"test_result_w11_r_2M_UKB/"
 
 ```{r}
 #load data versions
-load(paste0(data_path,"S_XY_matrices/geno-pheno_matrix_UKB_GIANT_2M.RData"))
+#load(paste0(data_path,"S_XY_matrices/geno-pheno_matrix_UKB_GIANT_2M.RData"))
+load(paste0(data_path,"S_XY_matrices/geno-pheno_matrix_UKB_GIANT_NEW.RData")) # with new giant data
 bmi_giant<-s_xy %>% select(3,4) %>% rownames_to_column('rsid')
 rm(s_xy)
 load(paste0(data_path,"S_XY_matrices/geno-pheno_matrix_UKB_2M.RData"))
@@ -54,40 +56,79 @@ rm(with_trait)
 ```
 
 
+```{r}
+
+# other exploratory data loading
+load(paste0(data_path,"S_XY_matrices/geno-pheno_matrix_UKB_GIANT_NEW_BMIonly.RData"))
+merged_bmi<-s_xy 
+rm(s_xy)
+dim(merged_bmi)
+merged_bmi2<-merged_bmi %>% filter(`ieu-a-2_pval`> 0.01 & `UKB-b-19953_pval` > 0.01) 
+dim(merged_bmi2)
+
+beta_diff_table<-fread(paste0(data_path, "results/test_result_w11_r_2M_UKB/matrix_results_comparison.tsv"))
+# get SNPs with r_1 difference  > 0.02
+diff_r_SNPs<- beta_diff_table %>% filter(r_diff > 0.02) %>% pull(SNP)
+merged_bmi2<-merged_bmi %>% filter(rsid %in% diff_r_SNPs )
+```
+
+
 
 ```{r}
 
-merged_bmi<- merged_bmi %>%
+merged_bmi2<- merged_bmi2 %>%
           mutate(beta_direction = ifelse(`ieu-a-2_b` < 0 & `UKB-b-19953_b` < 0, "both negative",
                                   ifelse(`ieu-a-2_b` > 0 & `UKB-b-19953_b` > 0, "both positive",
-                                  ifelse(`ieu-a-2_b` == 0 & `UKB-b-19953_b` >  0, "zero in GIANT, positive in UKB",
-                                  ifelse(`ieu-a-2_b` == 0 & `UKB-b-19953_b` <  0, "zero in GIANT, negative in UKB",
+                                  ifelse(`ieu-a-2_b` == 0 &`UKB-b-19953_b` >  0, "zero in GIANT, positive in UKB",
+                                  ifelse(`ieu-a-2_b` == 0 &`UKB-b-19953_b` <  0, "zero in GIANT, negative in UKB",
                                   ifelse(`ieu-a-2_b` > 0 & `UKB-b-19953_b` ==  0, "zero UKB, positive in GIANT,",
                                   ifelse(`ieu-a-2_b` < 0 & `UKB-b-19953_b` ==  0, "zero in UKB, negative in GIANT,",     
                                   ifelse(`ieu-a-2_b` > 0 & `UKB-b-19953_b` < 0, "positive in GIANT, negative in UKB",
-                                  ifelse(`ieu-a-2_b` < 0 & `UKB-b-19953_b` > 0, "negative in GIANT, positive in UKB",  "other")))))))))       
+                                  ifelse(`ieu-a-2_b` < 0 & `UKB-b-19953_b` > 0, "negative in GIANT, positive in UKB",  "other")))))))))    
+  
+#### TMP or redo!  
+merged_bmi3<- merged_bmi2 %>%
+          mutate(beta_direction = ifelse(`ukb-a-248_b` < 0 & `ukb-b-19953_b` < 0, "both negative",
+                                  ifelse(`ukb-a-248_b` > 0 & `ukb-b-19953_b` > 0, "both positive",
+                                  ifelse(`ukb-a-248_b` == 0 &`ukb-b-19953_b` >  0, "zero in NealeLab, positive in UKB",
+                                  ifelse(`ukb-a-248_b` == 0 &`ukb-b-19953_b` <  0, "zero in NealeLab, negative in UKB",
+                                  ifelse(`ukb-a-248_b` > 0 & `ukb-b-19953_b` ==  0, "zero UKB, positive in NealeLab,",
+                                  ifelse(`ukb-a-248_b` < 0 & `ukb-b-19953_b` ==  0, "zero in UKB, negative in NealeLab,",     
+                                  ifelse(`ukb-a-248_b` > 0 & `ukb-b-19953_b` < 0, "positive in NealeLab, negative in UKB",
+                                  ifelse(`ukb-a-248_b` < 0 & `ukb-b-19953_b` > 0, "negative in NealeLab, positive in UKB",  "other")))))))))    %>%
+                                  select(beta_direction) %>% count(beta_direction) %>% arrange(desc(beta_direction))  
+#### TMP or redo!
 
-merged_bmi %>% select(beta_direction) %>% count(beta_direction) %>% arrange(desc(beta_direction))
+
+
+merged_bmi2 %>% select(beta_direction) %>% count(beta_direction) %>% arrange(desc(beta_direction))
 #merged_bmi %>% filter(beta_direction== "other") %>%  View()
+```
 
+
+```{r}
+# creating log beta dataset
 
 # add log2 cols 
 get_10perc_smaller<-function(data_vector){
+  #take all non-zero value for current beta column (of abs values)
   x<-abs(data_vector)
   x2<-x[x!=0]
+  # decrease the smallest abs value by 10%
   x3<-min(x2)-min(x2)*0.1
+  # so you get a value closest to zero in this dataset (but not zero)
   return(x3)
 }
 
 
 merged_bmi_log<- merged_bmi %>% 
-              # replcae zeros with pseudocount of 1
+              # replace zeros with pseudocount of get_10perc_smaller()
               mutate(`ieu-a-2_b`= ifelse(`ieu-a-2_b`== 0, get_10perc_smaller(merged_bmi$`ieu-a-2_b`), `ieu-a-2_b`)) %>% 
               mutate(`UKB-b-19953_b`= ifelse(`UKB-b-19953_b`== 0, get_10perc_smaller(merged_bmi$`UKB-b-19953_b`), `UKB-b-19953_b`)) %>% 
-              # apply log2 to beta valaues (abs values - becuse youcant log negative) 
+              # apply log2 to beta valaues (abs values - because you cant log negative) 
               mutate(`ieu-a-2_b_log2` = log2(abs(`ieu-a-2_b`))) %>% 
               mutate(`UKB-b-19953_b_log2` = log2(abs(`UKB-b-19953_b`))) %>% 
-              # if the non-logged value was negative, we multiply it by -1 to chnge the sign on them
+              # if the non-logged beta value was negative, we multiply it by -1 to change the sign on them
               mutate(`UKB-b-19953_b_log2`= ifelse(`UKB-b-19953_b`< 0, `UKB-b-19953_b_log2`*-1, `UKB-b-19953_b_log2`)) %>% 
               mutate(`ieu-a-2_b_log2`= ifelse(`ieu-a-2_b`< 0, `ieu-a-2_b_log2`*-1, `ieu-a-2_b_log2`)) 
 
@@ -107,6 +148,27 @@ merged_bmi_log %>% select(1,2,4,11:15) %>% View()
 
 ```
 
+
+
+```{r}
+# study effect of differenc in direction
+
+
+merged_bmi2 %>% select(beta_direction) %>% count(beta_direction) %>% arrange(desc(beta_direction))
+
+merged_bmi2 %>% mutate(ieu_b=abs(`ieu-a-2_b`)) %>% filter(ieu_b>0.05) %>% View()
+
+
+
+merged_bmi2<-merged_bmi2 %>% 
+mutate(beta_pval_significance = ifelse(`UKB-b-19953_pval` < 0.01 & `ieu-a-2_pval` < 0.01, "both",
+                                ifelse(`UKB-b-19953_pval` < 0.01 , "only in UKB",
+                                ifelse(`ieu-a-2_pval` < 0.01 , "only in GIANT", "neither"))))
+```
+
+
+
+
 ```{r}
 # scatterplot
 pal<-c(wes_palette("Darjeeling1"), "darkgreen")
@@ -115,25 +177,45 @@ megapal <- c("#78B7C5", "#EABE94", "#EBCC2A", "#FF0000", "#3B9AB2" , "#B40F20", 
              "#F98400", "#46ACC8", "#00A08A", "grey")
 
 merged_bmi2<-merged_bmi[complete.cases(merged_bmi),]
-p<-ggplot(data = merged_bmi,
+p<-ggplot(data = merged_bmi2,
           mapping = aes(y = `ieu-a-2_b`, x = `UKB-b-19953_b`,
-                      colour=beta_direction, label = rsid, label2=trait_summary)) +
-  geom_point(alpha=0.5)+
+                      colour=beta_direction, label = rsid, 
+                      label2= `ieu-a-2_pval`, label3 = `UKB-b-19953_pval`))+ #shape = beta_pval_significance))+#, label2=trait_summary)) +
+  geom_point(alpha=0.7, size=3)+
   labs(y = "GIANT BMI effect size", x = "UKB BMI effect size",
-       colour="effect size (raw value)",
+       colour="beta",
        title="Scatter plot of BMI effect size (beta)",
-       subtitle="    50K SNPs only (used in metaCCA)")+
+       #subtitle=" only SNPs with >0.02 difference in correlation r_1")+
+       subtitle=" with p-val < 0.01 in both ")+
   theme_minimal()+
   scale_colour_manual(values = pal)+
+  #scale_shape_manual(values = c(19,1,15,17))+
   guides(color= guide_legend(override.aes = list(alpha = 1)))+
-  #theme(legend.position = "none") +
-  ylim(-0.20, 0.20)+xlim(-0.20, 0.20)
+  theme(legend.position = "right")+
+  ylim(-0.15, 0.15)+xlim(-0.15, 0.15)
   #ylim(-0.21, 0.21)+xlim(-0.21, 0.21)+
   #geom_hline(yintercept=0.05, linetype="dashed", color = "darkgrey")+
   #geom_vline(xintercept=0.05, linetype="dashed", color = "darkgrey")+
   #geom_hline(yintercept=-0.05, linetype="dashed", color = "darkgrey")+
   #geom_vline(xintercept=-0.05, linetype="dashed", color = "darkgrey")
 
+
+#### TMP or redo!  
+p<-ggplot(data = merged_bmi3,
+          mapping = aes(y = `ukb-a-248_b`, x = `ukb-b-19953_b`,
+                      colour=beta_direction, label = rsid, 
+                      label2= `ukb-a-248_pval`, label3 = `ukb-b-19953_pval`))+#, label2=trait_summary)) +
+  geom_point(alpha=0.4)+
+  labs(y = "NealeLab UKB BMI effect size", x = "IEU UKB BMI effect size",
+       colour="effect size (raw value)",
+       title="Scatter plot of BMI effect size (beta)",
+       subtitle=" p-val < 0.01 in both ")+
+  theme_minimal()+
+  scale_colour_manual(values = pal)+
+  guides(color= guide_legend(override.aes = list(alpha = 1)))  
+ #### TMP or redo! 
+  
+  
 pal2<- wes_palette("Darjeeling2")
 p<-ggplot(data = merged_bmi_log,
           mapping = aes(y = `ieu-a-2_b_log2`, x = `UKB-b-19953_b_log2`,
@@ -293,6 +375,236 @@ ply <- ggplotly(p)
 ```
 
   
+```{r}
 
+## running interactively on BC3
+
+# create 4 lists of SNPS:
+#  1. major beta discrepancies
+#  2. SNPs that are 10e-8 in both
+#  3. SNPs that are 10e-4 in both
+#  4. SNPs that are 0.01 in both
+
+
+load(paste0(data_path,"S_XY_matrices/geno-pheno_matrix_UKB_GIANT_NEW_BMIonly.RData"))
+
+merged_bmi<-s_xy 
+rm(s_xy)
+
+# creating log beta dataset
+ ####  ~~~~~ NB in the end I didn't use the log2 data - it's not a good representation of scale of change ~~~
+# but keeping this here for the record; skip to the secrion where I re-read saved file
+
+# add log2 cols 
+get_10perc_smaller<-function(data_vector){
+  #take all non-zero value for current beta column (of abs values)
+  x<-abs(data_vector)
+  x2<-x[x!=0]
+  # decrease the smallest abs value by 10%
+  x3<-min(x2)-min(x2)*0.1
+  # so you get a value closest to zero in this dataset (but not zero)
+  return(x3)
+}
+
+merged_bmi_log<- merged_bmi %>% 
+  # replace zeros with pseudocount of get_10perc_smaller()
+  mutate(`ieu-a-2_b`= ifelse(`ieu-a-2_b`== 0, get_10perc_smaller(merged_bmi$`ieu-a-2_b`), `ieu-a-2_b`)) %>% 
+  mutate(`UKB-b-19953_b`= ifelse(`UKB-b-19953_b`== 0, get_10perc_smaller(merged_bmi$`UKB-b-19953_b`), `UKB-b-19953_b`)) %>% 
+  # apply log2 to beta valaues (abs values - because you cant log negative) 
+  mutate(`ieu-a-2_b_log2` = log2(abs(`ieu-a-2_b`))) %>% 
+  mutate(`UKB-b-19953_b_log2` = log2(abs(`UKB-b-19953_b`))) %>% 
+  # if the non-logged beta value was negative, we multiply it by -1 to change the sign on them
+  mutate(`UKB-b-19953_b_log2`= ifelse(`UKB-b-19953_b`< 0, `UKB-b-19953_b_log2`*-1, `UKB-b-19953_b_log2`)) %>% 
+  mutate(`ieu-a-2_b_log2`= ifelse(`ieu-a-2_b`< 0, `ieu-a-2_b_log2`*-1, `ieu-a-2_b_log2`)) 
+
+# caluculate abs difference in log2_beta
+merged_bmi_log<-merged_bmi_log %>% 
+  mutate(log2_beta_abs_diff = abs(`ieu-a-2_b_log2` - `UKB-b-19953_b_log2`)) %>% 
+  mutate(log2_beta_abs_diff_round = round(log2_beta_abs_diff, 0))
+
+summary(merged_bmi_log$log2_beta_abs_diff)
+#   Min. 1st Qu.  Median    Mean 3rd Qu.    Max.
+#0.0000  0.7704  2.1708  7.3046 16.4475 37.7532
+
+merged_bmi_log %>% count(log2_beta_abs_diff_round) %>% print(n=Inf)
+## A tibble: 38 x 2
+#log2_beta_abs_diff_round      n
+#                   <dbl>  <int>
+#   0 379392
+#   1 531551
+#   2 265292
+#   3 125551
+#   4  62175
+#   5  30932
+#   6  14301
+#   7   5354
+#   8   2358
+#   9   1522
+#  10   1855
+#  11   4037
+#  12   8457
+#  13  18118
+#  14  35733
+#  15  69972
+#  16 114736
+#  17 141956
+#  18 131579
+#  19 100996
+#  20  69196
+#  21  45348
+#  22  28053
+#  23  15258
+#  24   7852
+#  25   3832
+#  26   1966
+#  27    915
+#  28    448
+#  29    229
+#  30    121
+#  31     61
+#  32     28
+#  33     11
+#  34      6
+#  35      5
+#  36      4
+#  38      2
+
+merged_bmi_log %>%
+  select(-allele_0, -allele_1, -`ieu-a-2_se`, -`UKB-b-19953_se`, log2_beta_abs_diff_round) %>%
+  write_tsv(., paste0(data_path, "S_XY_matrices/geno-pheno_matrix_UKB_GIANT_NEW_BMIonly_log2.tsv"))
+
+
+
+#### try the other way around: ffind abs beta difference
+merged_bmi_log<- read_tsv(paste0(data_path, "S_XY_matrices/geno-pheno_matrix_UKB_GIANT_NEW_BMIonly_log2.tsv"))
+
+merged_bmi_log2<- merged_bmi_log %>% 
+  mutate(beta_abs_diff = abs(`ieu-a-2_b` - `UKB-b-19953_b`)) %>% 
+  mutate(beta_abs_diff_round = round(beta_abs_diff, 2)) 
+
+merged_bmi_log2 <- merged_bmi_log2 %>% 
+  mutate(beta_direction = ifelse(`ieu-a-2_b` < 0 & `UKB-b-19953_b` < 0, "both negative",
+                          ifelse(`ieu-a-2_b` > 0 & `UKB-b-19953_b` > 0, "both positive",
+                          ifelse(`ieu-a-2_b` > 0 & `UKB-b-19953_b` < 0, "positive in GIANT, negative in UKB",
+                          ifelse(`ieu-a-2_b` < 0 & `UKB-b-19953_b` > 0, "negative in GIANT, positive in UKB",  "other")))))
+
+
+merged_bmi_log2 %>% count( beta_abs_diff_round) %>% print(n=Inf)
+# A tibble: 21 x 2
+#beta_abs_diff_round       n
+# <dbl>   <int>
+#  0    1437931
+#  0.01  680420
+#  0.02   68640
+#  0.03   18249
+#  0.04    7120
+#  0.05    3223
+#  0.06    1622
+#  0.07     852
+#  0.08     459
+#   0.09    292
+#   0.1     174
+#   0.11     94
+#   0.12     55
+#   0.13     28
+#   0.14     14
+#   0.15     10
+#   0.16      3
+#   0.17      5
+#   0.18      5
+#   0.19      3
+#   0.2       3
+
+## i did a lot manual exploring and decide on theshhold of < 0.015 
+
+# here i explored the differences observed when effect is in the sameor opposite directions 
+merged_bmi_log2 %>% filter(beta_direction %in% c("both positive", "both negative")) %>%  count( beta_abs_diff_round) %>% print(n=Inf)
+merged_bmi_log2 %>% filter(beta_direction %in% c("positive in GIANT, negative in UKB", "negative in GIANT, positive in UKB")) %>%  count( beta_abs_diff_round) %>% print(n=Inf)
+
+merged_bmi_log2 %>% filter(beta_direction %in% c("both positive", "both negative")) %>% View()
+merged_bmi_log2 %>% filter(beta_direction %in% c("positive in GIANT, negative in UKB", "negative in GIANT, positive in UKB")) %>%  View()
+
+# it seems that when effect is in opposite direction, most things are not significant  (~100 in UKB)
+# going to use difference threshold of  > 0.01 to select SNPs for removal 
+
+merged_bmi_log2 %>%  filter(beta_abs_diff <= 0.015) %>% dim()
+
+list1_wo_dis_beta <- merged_bmi_log2 %>%  filter(beta_abs_diff > 0.015) %>% 
+                      select(rsid) %>% 
+                      separate(rsid, into=c('SNP', 'allele_0', 'allele_1'), sep="_") %>% 
+                      select(SNP)
+dim(list1_wo_dis_beta)
+
+write_tsv(list1_wo_dis_beta, paste0(data_path, "genotype_matrix_2/annotated_genes_subsetting/list1_wo_dis_beta.tsv"))
+
+## Filtering by pval to get lists 2,3,4
+
+merged_bmi_log2 %>% filter_at(vars(ends_with("pval")), any_vars(. < 10e-8) ) %>% dim()#27870
+merged_bmi_log2 %>% filter_at(vars(ends_with("pval")), any_vars(. < 10e-6) ) %>% dim()#58883
+merged_bmi_log2 %>% filter_at(vars(ends_with("pval")), any_vars(. < 10e-4) ) %>% dim()#157110
+
+merged_bmi_log2 %>% filter_at(vars(ends_with("pval")), all_vars(. < 10e-8) ) %>% dim()#1864
+merged_bmi_log2 %>% filter_at(vars(ends_with("pval")), all_vars(. < 10e-6) ) %>% dim()#3975
+merged_bmi_log2 %>% filter_at(vars(ends_with("pval")), all_vars(. < 10e-4) ) %>% dim()#15130
+merged_bmi_log2 %>% filter_at(vars(ends_with("pval")), all_vars(. < 0.01) ) %>% dim() #41129
+
+merged_bmi_log2 %>% filter_at(vars(ends_with("pval")), all_vars(. < 10e-4) ) %>% View()
+
+# list 2
+list2_pval10e8 <- 
+  merged_bmi_log2 %>%  filter_at(vars(ends_with("pval")), all_vars(. < 10e-8) )  %>% 
+                      select(rsid) %>% 
+                      separate(rsid, into=c('SNP', 'allele_0', 'allele_1'), sep="_") %>% 
+                      select(SNP)
+dim(list2_pval10e8)
+write_tsv(list2_pval10e8, paste0(data_path, "genotype_matrix_2/annotated_genes_subsetting/list2_pval10e8.tsv"))
+
+list2_pval10e8_df <- 
+  merged_bmi_log2 %>%  filter_at(vars(ends_with("pval")), all_vars(. < 10e-8) )  %>% 
+                      select(rsid) %>% 
+                      separate(rsid, into=c('SNP', 'REF', 'ALT'), sep="_") %>% 
+                      mutate(ANNOT = SNP)
+write_tsv(list2_pval10e8_df, paste0(data_path, "genotype_matrix_2/annotated_genes_subsetting/list2_pval10e8_df.tsv"))
+
+
+
+# list 3
+list3_pval10e4 <- 
+  merged_bmi_log2 %>%  filter_at(vars(ends_with("pval")), all_vars(. < 10e-4) )  %>% 
+  select(rsid) %>% 
+  separate(rsid, into=c('SNP', 'allele_0', 'allele_1'), sep="_") %>% 
+  select(SNP)
+dim(list3_pval10e4)
+write_tsv(list3_pval10e4, paste0(data_path, "genotype_matrix_2/annotated_genes_subsetting/list3_pval10e4.tsv"))
+
+list3_pval10e4_df <- 
+  merged_bmi_log2 %>%  filter_at(vars(ends_with("pval")), all_vars(. < 10e-4) )  %>% 
+                      select(rsid) %>% 
+                      separate(rsid, into=c('SNP', 'REF', 'ALT'), sep="_") %>% 
+                      mutate(ANNOT = SNP)
+write_tsv(list3_pval10e4_df, paste0(data_path, "genotype_matrix_2/annotated_genes_subsetting/list3_pval10e4_df.tsv"))
+
+
+
+# list 4
+list4_pval10e3 <- 
+  merged_bmi_log2 %>%  filter_at(vars(ends_with("pval")), all_vars(. < 10e-3) )  %>% 
+  select(rsid) %>% 
+  separate(rsid, into=c('SNP', 'allele_0', 'allele_1'), sep="_") %>% 
+  select(SNP)
+dim(list4_pval10e3)
+write_tsv(list4_pval10e3, paste0(data_path, "genotype_matrix_2/annotated_genes_subsetting/list4_pval10e3.tsv"))
+
+list4_pval10e3_df <- 
+  merged_bmi_log2 %>%  filter_at(vars(ends_with("pval")), all_vars(. < 10e-3) )  %>% 
+                      select(rsid) %>% 
+                      separate(rsid, into=c('SNP', 'REF', 'ALT'), sep="_") %>% 
+                      mutate(ANNOT = SNP)
+write_tsv(list4_pval10e3_df, paste0(data_path, "genotype_matrix_2/annotated_genes_subsetting/list4_pval10e3_df.tsv"))
+
+
+```
+  
   
 
+  

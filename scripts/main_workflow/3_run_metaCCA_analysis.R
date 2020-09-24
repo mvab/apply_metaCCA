@@ -1,14 +1,12 @@
-
 library(metaCCA)
+library(parallel)
+library(MASS)
+library(pryr)
 library(plyr)
 library(dplyr)
 library(readr)
 library(tibble)
 library(purrr)
-library(parallel)
-library(MASS)
-library(pryr)
-
 
 memory_comments = T
 
@@ -27,24 +25,40 @@ if (length(args)==0) {
       * <analysis_type> : 'snps' - univariate SNPs analysis; 
                           'genes' - multivariate SNPs per gene analysis (genes that contain 2+ SNPs);
       * <chrs> : chromosome to process; the parameter accepts individual number 1-22 or 'all' to do all chromosomes; if analysis snps specify 'all'
+      * <N> : sample size (if combining several cohorts, use sample size of the smaller one)
+      * <s_xy_rdata> : name + path of S_XY matrix `.Rdata` file in data directory (specified separately)
+      * <ref_file> : name + path of SNPs table to analyse (with gene annotations - has to be present for both genes and snps analysis) in data directory (specified separately)
       * <data_path>: data directory; if not supplied, will assumed that project folder on epi-franklin is to be used
+      
+      
+      NB also the script expects to use
+      - snp_lists/bad_allele_snps.txt in `data_path`
+      - S_XX_matrices/LDmatrix_chr<chrs>.RData in `data_path`
+      - results folder in `data_path`
+      
       ")
-  stop("Must provide at least 3 arguments")
+  stop("Must provide at least 6 arguments")
   
-} else if ( length(args) == 3 ){
+} else if ( length(args) == 6 ){
   
   numCores <- args[1] 
   analysis_type <- args[2] 
   chrs <- args[3]
+  N <- as.numeric(args[4])
+  s_xy_rdata <-args[5]
+  ref_file <- args[6]
   data_path <- "/projects/XremovedX/" # this works on epif
-
+  
   # data_path<-"/XremovedX/" BC3
   
 } else{
   numCores <- args[1]
   analysis_type <- args[2]
   chrs <- args[3]
-  data_path <- args[4]
+  N <- as.numeric(args[4])
+  s_xy_rdata <-args[5]
+  ref_file <- args[6]
+  data_path <- args[7]
 }
 
 print(paste("Set cores:", numCores))
@@ -68,28 +82,32 @@ if (!dir.exists(data_path)){
   print(paste("Data location:", data_path))
 }
 
+if (!file.exists(paste0(data_path, s_xy_rdata))){
+  stop("Specified S_XY Rdata does not exist")
+} else{
+  print(paste("File exists:", paste0(data_path, s_xy_rdata)))
+}
+
+if (!file.exists(paste0(data_path, ref_file))){
+  stop("Specified SNPs annotation table does not exist")
+} else{
+  print(paste("File exists:", paste0(data_path, ref_file)))
+}
+
 if ( memory_comments == T ) print(paste0("Memory after loading libraries and arguments: ", pryr::mem_used()))
 
 
 print("Loading genotype data...")
-load(paste0(data_path, "S_XY_matrices/geno-pheno_matrix_UKB.RData")) #s_xy_ukb
-N = 436419
-
+load(paste0(data_path, s_xy_rdata))
 if ( memory_comments == T ) print(paste0("Memory after loading S_XY: ", pryr::mem_used()))
 
 
 print("Loading and parsing gene annotations to create gene dictionary... ")
 # list of SNPs to exclude from the analysis
-snps_to_drop<-read_tsv(paste0(data_path,"snp_lists/bad_allele_snps.txt"), col_names = F) %>% as_vector() %>% unname()
-
+snps_to_drop<-read_tsv(paste0(data_path,"snp_lists/bad_allele_snps.txt"), col_names = F) %>% pull(X1)
 # SNPs in genes list
-case="X" # last one
-ref<-read_tsv(paste0(data_path,"genotype_matrix_", case,"/annotated_genes.txt"), col_names=T) %>% filter(!SNP %in% snps_to_drop)
-
+ref<-read_tsv(paste0(data_path,ref_file), col_names=T) %>% filter(!SNP %in% snps_to_drop)
 if ( memory_comments == T ) print(paste0("Memory after loading text files: ", pryr::mem_used()))
-
-
-
 
 
 print("Creating S_YY matrix... ")
@@ -120,11 +138,11 @@ apply_metaCCA_multi <- function(current_gene, gene_dict, s_xy, s_yy, s_xx, N) {
     #mutate(trait_weights= gsub('[()"c ]', '', trait_weights)) %>% 
     #mutate(snp_weights= gsub('[()"c ]', '', snp_weights)) %>% 
     mutate(gene = current_gene) %>% 
-    dplyr::rename(log10pval=`-log10(p-val)`) %>% 
+    rename(log10pval=`-log10(p-val)`) %>% 
     mutate( pval = ifelse(is.infinite(log10pval), 0, 10^-log10pval)) %>%  # if logpval is Inf, convert it to 0 as pval
     mutate(gene = current_gene) %>% 
     mutate(snps_count = length(gene_dict[[current_gene]])) %>% 
-    dplyr::select(c("gene", "r_1", "pval", "SNPs", "snps_count"))#, "trait_weights", "snp_weights"))
+    select(c("gene", "r_1", "pval", "SNPs", "snps_count"))#, "trait_weights", "snp_weights"))
   
   result<-rbind(data.frame(), metaCCA_multi_upd)
   return(result)
@@ -134,7 +152,7 @@ apply_metaCCA_multi <- function(current_gene, gene_dict, s_xy, s_yy, s_xx, N) {
 apply_metaCCA_snp <- function(current_snp, ref, s_xy, s_yy,  N) { 
   
   print(paste0("Running metaCCA on SNP ", current_snp))
-
+  
   metaCCA_single = metaCcaGp( nr_studies = 1, 
                               S_XY = list( s_xy ), 
                               std_info = c( 1 ),  # standardised
@@ -147,13 +165,13 @@ apply_metaCCA_snp <- function(current_snp, ref, s_xy, s_yy,  N) {
     rownames_to_column("snp") %>% 
     mutate(snp= gsub('[()"c ]', '', snp)) %>% 
     #mutate(trait_weights= gsub('[()"c ]', '', trait_weights)) %>% 
-    dplyr::rename(log10pval=`-log10(p-val)`) %>% 
+    rename(log10pval=`-log10(p-val)`) %>% 
     mutate(pval= 10^-log10pval) %>%
     left_join(ref[,c("snp", "ANNOT")], by= "snp") %>% 
-    dplyr::rename(gene = ANNOT) %>% 
-    dplyr::rename(SNP = snp) %>% 
-    dplyr::select(c("SNP", "r_1", "pval", "log10pval", "gene" ))#,"trait_weights"))
-    
+    rename(gene = ANNOT) %>% 
+    rename(SNP = snp) %>% 
+    select(c("SNP", "r_1", "pval", "log10pval", "gene" ))#,"trait_weights"))
+  
   result<-rbind(data.frame(), metaCCA_single_upd)
   return(result)
 }  
@@ -172,14 +190,13 @@ if ( analysis_type == "genes"){
   ref$snp<-paste0( ref$SNP, "_", ref$REF, "_", ref$ALT)
   for (gene in unique(ref$ANNOT)){
     snps<- ref %>% filter(ANNOT == gene) %>% 
-                    dplyr::select(snp) %>% 
-                    as_vector() %>% unname()
+      pull(snp) 
     gene_dict[[gene]] <-snps
   }
   
   # create summary of SNPs per gene
   gene_dict_summary <- setNames(data.frame(matrix(ncol = 2, nrow = length(gene_dict)) ),
-                                                      c("gene", "snp_count"))
+                                c("gene", "snp_count"))
   gene_dict_summary$gene <- as.character(gene_dict_summary$gene)
   gene_dict_summary$snp_count <- as.numeric(gene_dict_summary$snp_count)
   for (i in 1:length(gene_dict)){
@@ -196,10 +213,10 @@ if ( analysis_type == "genes"){
   
   # select multip-SNP genes and single SNP genes
   #multi_snp_genes<-gene_dict_summary %>% filter(snp_count > 1) %>% 
-  #                dplyr::select(gene) %>% as_vector() %>% unname()
+  #                pull(gene)
   #
   #single_snp_genes<- gene_dict_summary %>%  filter(snp_count == 1) %>% 
-  #                  dplyr::select(gene) %>% as_vector() %>% unname()
+  #                  pull(gene)
   #
   if ( memory_comments == T ) print(paste0("Memory after creating dicts: ", pryr::mem_used()))
   
@@ -223,7 +240,7 @@ if (analysis_type == "genes"){
   cat("\n\n")
   
   for (chr in chrs ){
-  
+    
     print(paste0("Loading LD matrix for chr ", chr))
     load(paste0(data_path, "S_XX_matrices/LDmatrix_chr",chr ,".RData")) # s_xx
     
@@ -233,8 +250,7 @@ if (analysis_type == "genes"){
     gene_list <- gene_dict_summary %>% 
       filter(CHR== chr) %>% 
       filter(snp_count > 1) %>% 
-      dplyr::select(gene) %>% 
-      as_vector() %>% unname()
+      pull(gene)
     
     metaCCA_multi_list <- mclapply(gene_list, apply_metaCCA_multi, mc.cores = numCores,
                                    gene_dict = gene_dict, 
@@ -249,7 +265,7 @@ if (analysis_type == "genes"){
     print("Saving multi SNP metaCCA data... ")
     write_tsv(metaCCA_multi_df, paste0(data_path, "results/metaCCA_multisnp_genes_chr",chr,".tsv"))
   }
-
+  
   
   
 } else if (analysis_type == "snps"){
@@ -257,7 +273,7 @@ if (analysis_type == "genes"){
   cat("\n\n")
   print(paste("Running single SNP - multiple traits metaCCA analysis"))
   cat("\n\n")
-
+  
   metaCCA_single_snps <- mclapply(single_snps, apply_metaCCA_snp, mc.cores = numCores,
                                   ref = ref, 
                                   s_xy = s_xy, s_yy = s_yy, 
@@ -265,14 +281,14 @@ if (analysis_type == "genes"){
   
   # convert list of vectors to df
   metaCCA_single_snp_df <- bind_rows(lapply(metaCCA_single_snps, as.data.frame.list))
+
   print("Saving data single-SNP gene results... ")
-  write_tsv(metaCCA_single_snp_df, paste0(data_path, "results/metaCCA_snps_all.tsv"))
-  
-  
+  time <- gsub(" ", "_", Sys.time())
+  write_tsv(metaCCA_single_snp_df, paste0(data_path, "results/metaCCA_snps_all_", time,".tsv")) # with this name as back-up
+  # with descr name
+  data_suffix <- strsplit(s_xy_rdata, "\\.")[[1]][1] %>% gsub("S_XY_matrices/geno-pheno_matrix_", "", .)
+  output_name <- paste0("metaCCA_snps_all_", data_suffix, ".tsv")
+  write_tsv(metaCCA_single_snp_df, paste0(data_path, "results/", output_name))
+
+
 }
-
-
-  
-
-
-

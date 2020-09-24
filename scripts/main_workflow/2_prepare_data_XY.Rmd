@@ -8,6 +8,7 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(data.table)
+library(vroom)
 library(tidyr)
 library(dplyr)
 library(readr)
@@ -27,68 +28,117 @@ data_path <<- "/projects/XremovedX/"     # <<- makes it global var
 
 ```{r}
 # set case number and files
-case <- 3 # (see readme)
-exclude_list<-"bad_allele_snps_IEUvsNL.txt"
-prefix_common<-"ukb_ieu_nealelab"  # case verbose name (common rsid prefix and output file suffix)
+case <- 2 # (see readme)
+exclude_list<-"bad_allele_snps_giant"
+prefix_common<-"ukb_giant_new"  # case verbose name (common rsid prefix and output file suffix)
 ```
 
 ```{r}
 # load reference data SNP list and list of SNPs to exclude
-ref_data<-read_tsv(paste0(data_path,"genotype_matrix_", case,"/data_overlap.bim"), col_names = F)  %>% 
-                                    select(c(2,5,6)) %>% 
+ref_data<-vroom(paste0(data_path,"genotype_matrix_", case,"/data_overlap.bim"), col_select = c(2,5,6), col_names=F)  %>% 
                                     rename(rsid = X2, allele_0_ref = X5,  allele_1_ref = X6) 
 # list of SNPs to not use; normally this list is made by teial and error fro the particular problem (this is a copy of 'bad_rsid' variable from fisrt run of this analysis)
-snps_to_drop<-read_tsv(paste0(data_path,"snp_lists/", exclude_list), col_names = F) %>% as_vector() %>% unname()
+snps_to_drop<-fread(paste0(data_path,"snp_lists/", exclude_list, ".txt"), header=F) %>% pull(V1)
 ```
 
 
-## Select and load dataset (**ukb / magnetic**)
+## Select and load dataset 
 
 ```{r}
 
-prefix<-"ukb"
+prefix<- "ukb" # folder
 #read ukb tsv files
 all.files <- list.files(path = paste0(data_path, "S_XY_matrices/", prefix), pattern = "*tsv", full.names = T)
-#all.files=all.files[c(1,8)]
+all.files=all.files[c(1,4)]
 l <- lapply(all.files, fread, sep="\t")
 
-common_list<-read.table(paste0(data_path,"snp_lists/", prefix_common, "_common_snps_rsid.txt"), header=F, stringsAsFactors = F)$V1
+common_list<-fread(paste0(data_path,"snp_lists/", prefix_common, "_common_snps_rsid.txt"), header=F) %>% pull(V1)
 ```
 
 
 ```{r}
 ## FUNCTIONS ##
 
-process_data <- function(data_list, ref_data, to_drop, to_keep){
-  df <-  data_list %>% 
-    # merge gwas in lists into one df
-    reduce(left_join, by = c("rsid"="rsid", "allele_0"="allele_0", "allele_1"="allele_1")) 
+
+compare_alleles <- function(data_list, data_indexes, to_keep){
   
+  ## Compare data from two sources and identify which rsid have mismatching alleles 
+  ## (or one of the datasets has multiallelic SNPs)
+  ## output SNPs that don't match between the two - will drop them later
+
+  # extract two datasets into a new list, subsetting to common SNPs and creating a rsid_ref_alt variable `SNP`
+  data_list_sub <- list()
+  data_list_sub[[1]] <- data_list[[data_indexes[1]]] %>% filter(rsid %in% to_keep) %>% unite(SNP, rsid:allele_1, sep="_" ,remove=F)
+  data_list_sub[[2]] <- data_list[[data_indexes[2]]] %>% filter(rsid %in% to_keep) %>% unite(SNP, rsid:allele_1, sep="_", remove=F)
+
+  df <-  data_list_sub %>% 
+    # merge gwas in lists into one df, using `SNP`
+    reduce(full_join, by = c("SNP")) %>%
+    separate(SNP, into=c('rsid', 'allele_0', 'allele_1'), sep="_")
+  
+  df<-df %>%
+    # join alleles in each dataset and compare them
+    unite(alleles_data1, allele_0.x:allele_1.x, remove=T) %>% 
+    unite(alleles_data2, allele_0.y:allele_1.y, remove=T) %>% 
+    mutate(allele = ifelse(alleles_data1 == alleles_data2, "same", "diff")) 
+  
+  #table(df$allele)
+  wrong_alleles_SNPs <- df %>% filter(allele == "diff") %>% unite(SNP, rsid:allele_1, sep="_" ,remove=F) %>%  pull(SNP)
+  
+  print(paste0("Identified ", length(wrong_alleles_SNPs), 
+               " alleles that don't match between two data sources: ", colnames(df)[6], " and ", colnames(df)[11]))
+  
+  #cleanup
+  rm(data_list_sub)
+  rm(df)
+  return(wrong_alleles_SNPs)
+}
+
+
+
+
+process_data <- function(data_list, ref_data, to_keep, to_drop, to_drop_w_alleles){
+  
+  # create `SNP` variable in all dfs
+  for (i in 1:length(data_list)){
+    data_list[[i]] <- data_list[[i]] %>% unite(SNP, rsid:allele_1, sep="_" ,remove=T) 
+  }
+  
+  df <-  data_list %>% 
+    # merge gwas in lists into one df by `SNP` and the split it
+    reduce(full_join, by = c("SNP")) 
   print("Merged data!")
+  
   
   df<- df %>%  
     #drop coulumns with pvals 
     select(-c(contains("pval")))  %>% 
+    # drop bad SNPs with alleles (filter, then split to back to 3 cols)
+    filter(!SNP %in% to_drop_w_alleles) %>% 
+    separate(SNP, into=c('rsid', 'allele_0', 'allele_1'), sep="_") %>% 
      # drop bad SNPs
     filter(!rsid %in% to_drop) %>% 
     # keep SNPs shared by all traits
     filter(rsid %in% to_keep) %>% 
     # drop indels
-    filter_at(vars(starts_with("all")), all_vars(. %in% c("A","T","G","C")) ) 
+    filter_at(vars(starts_with("allele")), all_vars(. %in% c("A","T","G","C")) )  
   
-  print("Finished steps before harmonisation")
+  if (sum(is.na(df)) !=0 ){
+    print("      ~ WARNING: filtered df contains NAs ~      ")
+  }
+  print("Finished filtering steps before harmonisation")
   
-    df<- df %>%  
-    # apply data harmonisation
-    harmonise_with_ref(., ref_data) 
+  
+  # apply data harmonisation
+  df<- harmonise_with_ref(df, ref_data) 
+  print("Finished Harmonisation with reference data")
     
-  print("Finished Harmonisation")
-    
+  
   df_final<- df %>%  
     # join rsid+alleles to create unique rsid
     unite("rsid_w_alleles", rsid:allele_1, sep="_", remove=FALSE) %>% 
     # covert to factors (required for later)
-    mutate_at(vars(starts_with("all")), factor) %>% 
+    mutate_at(vars(starts_with("allele")), factor) %>% 
     # set rsid column as rownames
     select(-rsid) %>% column_to_rownames('rsid_w_alleles') 
   
@@ -127,8 +177,8 @@ harmonise_with_ref <- function(df, ref){
     # store mismatched allele snp to remove from the analyis
     bad_rsid<- df_tmp %>%  filter(match_upd == 0 & !rsid %in% dupl_rsid) %>% pull(rsid) 
     
-    # get rsid that are missing in data (normally one allele pait is thre, but the other is missing, so we will drop entire rsid)
-    missing_rsid <- df %>% filter_at(vars(starts_with("UKB")), any_vars(is.na(.))) %>% pull(rsid)
+    # get rsid that are missing in data (normally one allele pait is there, but the other is missing, so we will drop entire rsid)
+    missing_rsid <- df %>% filter_at(vars(ends_with("_b")), any_vars(is.na(.))) %>% pull(rsid)
     
     #  save remaining mismatches to file; will need to redo the anaysis with them excluded in S_XY and S_XX
     bad_rsid <- unique(c(bad_rsid, missing_rsid))
@@ -156,21 +206,34 @@ harmonise_with_ref <- function(df, ref){
 
 ```{r}
 
+# if using data from different cohort, use this function to check if all alleles match (i.e. are harmonised)
+# here check 1) ieu-a-2 and 2) any UKB 
+unharmonised_snps <- compare_alleles(l, data_indexes = c(1,2), to_keep = common_list)
+
+
 # create s_xy matrix
-s_xy <- process_data(l, ref_data, snps_to_drop, common_list)
+s_xy <- process_data(l, ref_data, 
+                     to_keep = common_list,
+                     to_drop = snps_to_drop, 
+                     to_drop_w_alleles = unharmonised_snps)
 head(s_xy)
+
+
+# update pvals (need to comment out in the function to get them!)
+s_xy <- s_xy %>% rownames_to_column('rsid') %>% 
+  mutate(`ieu-a-2_pval`= 10^-`ieu-a-2_pval`) %>% 
+  mutate(`UKB-b-19953_pval`= 10^-`UKB-b-19953_pval`) 
 
 # normal
 # save df as a RData object 
 save(s_xy, file=paste0(data_path,"S_XY_matrices/geno-pheno_matrix_",toupper(prefix_common),".RData"))
 
 # saving for GIANT test
-#s_xy_full<-s_xy
-#s_xy<- s_xy_full %>% select(-c("UKB-b-19953_b", "UKB-b-19953_se"))
-#save(s_xy, file=paste0(data_path,"S_XY_matrices/geno-pheno_matrix_UKB_GIANT_2M.RData"))
-#s_xy<- s_xy_full %>% select(-c("ieu-a-2_b", "ieu-a-2_se"))
-#save(s_xy, file=paste0(data_path,"S_XY_matrices/geno-pheno_matrix_UKB_2M.RData"))
+s_xy_full<-s_xy
+s_xy<- s_xy_full %>% select(-c("UKB-b-19953_b", "UKB-b-19953_se"))
+save(s_xy, file=paste0(data_path,"S_XY_matrices/geno-pheno_matrix_UKB_GIANT_2M_updGIANT.RData"))
+s_xy<- s_xy_full %>% select(-c("ieu-a-2_b", "ieu-a-2_se"))
+save(s_xy, file=paste0(data_path,"S_XY_matrices/geno-pheno_matrix_UKB_2M_updGIANT.RData"))
 
 ```
-
 

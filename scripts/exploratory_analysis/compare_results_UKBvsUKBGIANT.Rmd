@@ -29,7 +29,7 @@ data_path<-"/XremovedX/" # to use in Rstudio
 ukb_only<-fread((paste0(data_path,"results/test_result_w11_r_2M_UKB/metaCCA_snps_all_UKB.tsv")))
 ukb_giant<-fread((paste0(data_path,"results/test_result_w11_r_2M_UKB_GIANT/metaCCA_snps_all_UKB_GIANT.tsv")))
 
-with_trait<- read_tsv(paste0(data_path, "results/test_result_w11_r_2M_UKB/metaCCA_snps_all_UKB_annotated_w_traits.tsv")) %>% 
+with_trait<- fread(paste0(data_path, "results/test_result_w11_r_2M_UKB/metaCCA_snps_all_UKB_annotated_w_traits.tsv")) %>% 
               select("SNPS", "trait_summary", "MAPPED_TRAIT")
 
 dim(ukb_only)
@@ -77,8 +77,8 @@ merged_r<- inner_join(ukb_only,ukb_giant, by=c("gene"= "gene", "SNP"="SNP")) %>%
           mutate(r_1_giant=ifelse( is.na(r_1_giant), 0, r_1_giant) )
 
 # exploratory difference
-merged_r$r_diff<-round(abs(merged_r$r_1_ukb - merged_r$r_1_giant),2)
-merged_r$p_diff<-round(abs(merged_r$pval_ukb - merged_r$pval_giant),2)
+merged_r$r_diff<-round(abs(merged_r$r_1_ukb - merged_r$r_1_giant),3)
+merged_r$p_diff<-round(abs(merged_r$pval_ukb - merged_r$pval_giant),3)
 
 # add categotial variable
 merged_r<- merged_r %>% 
@@ -145,12 +145,11 @@ p<-ggplot(data = merged_r,
 ```
 
 ```{r}
-library(viridisLite)
-
 merged_r2<-merged_r[complete.cases(merged_r),] # only annotated with traits
 merged_r3<-merged_r %>% filter(r_1_giant < 0.2) # truy without max outlier
 
-p<-ggplot(data = merged_r2,
+pal <- wes_palette("Zissou1", 5, type = "continuous")
+p<-ggplot(data = merged_r,
           mapping = aes(x = r_1_ukb, y = r_1_giant, 
                       colour=r_diff, label = SNP, label2=gene, label3=trait_summary)) + 
   geom_point()+
@@ -158,7 +157,7 @@ p<-ggplot(data = merged_r2,
        colour="r_1 difference",
        title="Scatter plot of Canonical Correlation (CC) value (r_1)")+
   theme_minimal()+
-  scale_colour_viridis_c()+
+  scale_colour_gradientn(colours = pal) + 
   ylim(0,0.22)+xlim(0,0.17)+
   #scale_colour_manual(values = megapal)+
   #scale_alpha()+
@@ -185,3 +184,24 @@ r_diff_traits_counts<- merged_r %>%
                         column_to_rownames('trait_summary')
 ```
 
+
+```{r}
+# view r difference by bins
+merged_r %>% 
+  select(r_diff) %>% 
+  mutate(r_diff=round(r_diff,2)) %>% 
+  count(r_diff)
+
+# get all SNPs that are > 0.02 differenct
+merged_r %>% 
+  filter(r_diff >= 0.02) %>% 
+  dim()
+  
+merged_r %>% 
+  filter(r_diff >= 0.02) %>% 
+  select(SNP) %>% 
+  # todo split into rsid and sort, drop header
+  write_tsv(paste0(data_path, "results/test_result_w11_r_2M_UKB_GIANT/disagreeing_SNPs_in_r_1.tsv"))
+
+
+```

@@ -28,6 +28,7 @@ data_path<-"/XremovedX" # to use in Rstudio
 ```{r}
 # load data annotated in script 4_
 univariate_results<-"test_result_w11_r_UKB9M/" 
+univariate_results<-"test_result_w11_r_2M_UKB"
 
 with_trait<- fread(paste0(data_path, "results/", univariate_results,"/metaCCA_snps_all_UKB_annotated_w_traits.tsv"))
 with_trait<- fread(paste0(data_path, "results/", univariate_results,"/metaCCA_snps_all_UKB_annotated_w_traits_addedProxies.tsv"))
@@ -41,7 +42,7 @@ dat<- with_trait %>%
           mutate(log10pval_trunc= as.integer(-log10(pval_truncated))) %>% 
           mutate(trait_summary=ifelse(trait_summary == 0, "x_miscellaneous", trait_summary)) %>% 
           mutate(full_trait=MAPPED_TRAIT) %>% 
-          select(gene, SNPS, r_1, log10pval_trunc, full_trait, proxy_rsq, 'STUDY ACCESSION', trait_summary) 
+          select(gene, SNPS, r_1, log10pval_trunc, full_trait,  trait_summary, 'STUDY ACCESSION')#, proxy_rsq,) 
 
 dat %>% select(trait_summary) %>% plyr::count() %>% arrange(freq)
 
@@ -216,4 +217,3 @@ p<- ggplot(data = data, mapping = aes(x = r_1_bins, fill= trait_summary)) +
 ply <- ggplotly(p)
 
 ```
-

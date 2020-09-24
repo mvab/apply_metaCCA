@@ -15,6 +15,7 @@ library(purrr)
 library(data.table)
 library(tidyselect)
 library(stringr)
+library(vroom)
 ```
 
 ```{r}
@@ -23,10 +24,10 @@ data_path<-"/XremovedX/" # to use in Rstudio
 #data_path<-"/projects/XremovedX/" #to use in terminal
 
 
+
 ## PICK CASE
 
-#univariate_results<-"test_result_w11_r_2M_UKB/"
-#univariate_results<-"test_result_w11_r_2M_UKB/"
+univariate_results<-"test_result_w11_r_2M_UKB/"
 #univariate_results<-"test_result_w12_UKB_NL/"
 univariate_results<-"test_result_w11_r_UKB9M/" # assuming that the tagret file here will be metaCCA_snps_all.tsv
 
@@ -42,14 +43,14 @@ univariate_results<-"test_result_w11_r_UKB9M/" # assuming that the tagret file h
 #                                 "PUBMEDID" , "STUDY","STUDY ACCESSION"  ) %>% 
 #                          separate_rows(MAPPED_GENE, sep="\\, ") %>%  distinct()
 #
-catalog_sub<- fread(paste0(data_path, "gwas_catalog/gwas_catalog_subset.tsv"))
-#write_tsv(catalog_sub, paste0(data_path, "gwas_catalog/gwas_catalog_subset.tsv"))
+catalog_sub<- vroom(paste0(data_path, "gwas_catalog/gwas_catalog_subset.tsv"))
+catalog_sub<- vroom(paste0(data_path, "gwas_catalog_subset.tsv"))
 
 ```
 
 ```{r}
 # Load metaCCA results for single SNPs analysis
-metacca_snps<-read_tsv(paste0(data_path,"results/", univariate_results, "/metaCCA_snps_all.tsv"))
+metacca_snps<-fread(paste0(data_path,"results/", univariate_results, "/metaCCA_snps_all.tsv"))
 
 dim(metacca_snps)
 metacca_snps <- metacca_snps %>%
@@ -84,6 +85,9 @@ dim(merged_full)
 # 62818 
 dim(merged_full[complete.cases(merged_full),]) # exact match in GWAS cat
 # 3619
+
+#if not doing proxies
+merged_complete<-merged_full
 ```
 
 ```{r}
@@ -244,26 +248,26 @@ annotate_with_trait_summary <- function(merged_df){
     traits_summary <- merged_df %>% 
               select("DISEASE/TRAIT" , "MAPPED_TRAIT" ) %>% 
               distinct() %>% 
-              mutate(trait_summary=ifelse( grepl(paste(traits_dict$bone, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "bone",
-                                   ifelse( grepl(paste(traits_dict$anthropometic, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "anthropometic",
-                                   ifelse( `DISEASE/TRAIT` == "Obesity-related traits", "anthropometic",       
+              mutate(trait_summary=ifelse( grepl(paste(traits_dict$bone, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "Bone",
+                                   ifelse( grepl(paste(traits_dict$anthropometic, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "Anthropometic",
+                                   ifelse( `DISEASE/TRAIT` == "Obesity-related traits", "Anthropometic",       
                                    #ifelse( grepl("Medication use" , `DISEASE/TRAIT`,  ignore.case=TRUE), "medication",      
                                    #ifelse( grepl(paste(traits_dict$medication, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "medication", 
-                                   ifelse( grepl(paste(traits_dict$cardiovascular, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "cardiovascular", 
-                                   ifelse( grepl(paste(traits_dict$cancer, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "cancer", 
-                                   ifelse( grepl(paste(traits_dict$metabol, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "metabolic",
-                                   ifelse( grepl(paste(traits_dict$autoimmune, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "autoimmune",
-                                   ifelse( grepl(paste(traits_dict$psychiatric, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "psychiatric", 
-                                   ifelse( grepl(paste(traits_dict$neurological, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "neurological", 
-                                   ifelse( grepl(paste(traits_dict$lung_smoking, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "respiratory", 
-                                   ifelse( grepl(paste(traits_dict$alcohol, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "alcohol", 
-                                   ifelse( grepl(paste(traits_dict$aging, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "aging", 
-                                   ifelse( grepl(paste(traits_dict$vision, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "vision", 
-                                   ifelse( grepl(paste(traits_dict$kidney, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "kidney", 
-                                   ifelse( grepl(paste(traits_dict$appearance, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "appearance", 
-                                   ifelse( grepl(paste(traits_dict$personality, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "personality", 
-                                   ifelse( grepl(paste(traits_dict$education, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "education", 
-                                   "x_miscellaneous"))))))))))))))))))
+                                   ifelse( grepl(paste(traits_dict$cardiovascular, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "Cardiovascular", 
+                                   ifelse( grepl(paste(traits_dict$cancer, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "Cancer", 
+                                   ifelse( grepl(paste(traits_dict$metabol, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "Metabolic",
+                                   ifelse( grepl(paste(traits_dict$autoimmune, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "Autoimmune",
+                                   ifelse( grepl(paste(traits_dict$psychiatric, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "Psychiatric", 
+                                   ifelse( grepl(paste(traits_dict$neurological, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "Neurological", 
+                                   ifelse( grepl(paste(traits_dict$lung_smoking, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "Respiratory", 
+                                   ifelse( grepl(paste(traits_dict$alcohol, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "Alcohol", 
+                                   ifelse( grepl(paste(traits_dict$aging, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "Aging", 
+                                   ifelse( grepl(paste(traits_dict$vision, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "Vision", 
+                                   ifelse( grepl(paste(traits_dict$kidney, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "Renal", 
+                                   ifelse( grepl(paste(traits_dict$appearance, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "Appearance", 
+                                   ifelse( grepl(paste(traits_dict$personality, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "Personality", 
+                                   ifelse( grepl(paste(traits_dict$education, collapse="|"),MAPPED_TRAIT, ignore.case=TRUE), "Education", 
+                                   "x_Miscellaneous"))))))))))))))))))
     
     write_tsv(traits_summary, paste0(data_path, "gwas_catalog/traits_categories.tsv"))
     return (traits_summary)
@@ -291,14 +295,13 @@ snps_out %>% select(trait_summary) %>% plyr::count() %>% arrange(freq)
 
 with_trait<-left_join(merged_complete, snps_out,
                      by = c("MAPPED_TRAIT"="MAPPED_TRAIT" , "DISEASE/TRAIT"="DISEASE/TRAIT"))%>% 
-            select(c("gene" , "SNPS", "r_1" , "pval" , 'proxy_rsq', 
+            select(c("gene" , "SNPS", "r_1" , "pval" , #'proxy_rsq', 
                      "DISEASE/TRAIT",  "MAPPED_TRAIT"  ,'STUDY ACCESSION' ,"trait_summary" )) %>% distinct 
 
 #write_tsv(with_trait, paste0(data_path, "results/",univariate_results,"/metaCCA_snps_all_UKB_annotated_w_traits.tsv"))
 write_tsv(with_trait, paste0(data_path, "results/", univariate_results,"/metaCCA_snps_all_annotated_w_traits_addedProxies.tsv"))
-
+write_tsv(with_trait,  paste0(data_path, "test_data.tsv"))
 ```
-
 
 
 
