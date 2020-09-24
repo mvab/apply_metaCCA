@@ -1,0 +1,51 @@
+configfile: "config.yaml"
+
+
+rule all:
+    input:
+        "S_XY/{gwas_id}.tsv"
+
+rule wget_vcf:
+    output:
+        vcf="vcf_download/{gwas_id}.vcf.gz"
+    params:
+        url = lambda wildcards: config['gwas_id'][wildcards.gwas_id]['vcf']
+    log:
+        "logs/wget_vcf/{gwas_id}.log"
+    shell:
+        "wget -nc -O {output.vcf} {params.url} "
+
+
+rule parse_vcf_cols:
+    input:
+        "vcf_download/{gwas_id}.vcf.gz"
+    output:
+        temp("tmp_subset1/{gwas_id}_subset.tsv")
+    params:
+        rg=r"%CHROM\t%POS\t%ID\t%REF\t%ALT[\t%ES\t%SE\t%LP]\n"
+    shell:
+        "bcftools query -f '{params.rg}' {input} -o {output}"
+
+
+
+rule only_required_cols:
+    input:
+        "tmp_subset1/{gwas_id}_subset.tsv"
+    output:
+        temp("tmp_subset2/{gwas_id}_subset_slim.tsv")
+    shell:
+        "cat {input} | cut -f3-8 - > {output}"
+ ### NB something may be wrong with allele order
+
+
+rule add_header:
+    input:
+        "tmp_subset2/{gwas_id}_subset_slim.tsv"
+    output:
+        "S_XY/{gwas_id}.tsv"
+    params:
+        rg=r"rsid\tallele_0\tallele_1\t{gwas_id}_b\t{gwas_id}_se\t{gwas_id}_pval"
+    log:
+        "logs/add_header/{gwas_id}.log"
+    shell:
+        "echo -e '{params.rg}'| cat - {input}  - > {output}"

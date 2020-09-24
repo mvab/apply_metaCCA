@@ -1,0 +1,9 @@
+gwas_id:
+  ukb-b-3768:
+    vcf: "https://gwas.mrcieu.ac.uk/files/ukb-b-3768/ukb-b-3768.vcf.gz"
+  ukb-b-12405:
+    vcf: "https://gwas.mrcieu.ac.uk/files/ukb-b-12405/ukb-b-12405.vcf.gz"
+  ukb-b-17422:
+    vcf: "https://gwas.mrcieu.ac.uk/files/ukb-b-17422/ukb-b-17422.vcf.gz"
+  ukb-b-1209:
+    vcf: "https://gwas.mrcieu.ac.uk/files/ukb-b-1209/ukb-b-1209.vcf.gz"
